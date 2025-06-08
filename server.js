@@ -4,19 +4,10 @@ const path = require('path');
 const db = require('./db');
 
 // --- Middleware Imports ---
-console.log("<<<<< DEBUG: server.js - Attempting to require ./middlewares/auditLogMiddleware.js >>>>>");
-const auditLogMiddlewareModule = require('./middlewares/auditLogMiddleware');
-const auditLogMiddleware = auditLogMiddlewareModule.auditLogMiddleware;
-console.log("<<<<< DEBUG: server.js - auditLogMiddleware type:", typeof auditLogMiddleware, " >>>>>");
-
-console.log("<<<<< DEBUG: server.js - Attempting to require ./middlewares/authMiddleware.js >>>>>");
-const authMiddlewareModule = require('./middlewares/authMiddleware');
-const authMiddleware = authMiddlewareModule.authMiddleware;
-const checkRole = authMiddlewareModule.checkRole;
-console.log("<<<<< DEBUG: server.js - authMiddleware type:", typeof authMiddleware, "checkRole type:", typeof checkRole, " >>>>>");
+const { auditLogMiddleware } = require('./middlewares/auditLogMiddleware');
+const { authMiddleware, checkAuth, checkRole } = require('./middlewares/authMiddleware');
 
 // --- Route Imports ---
-console.log("<<<<< DEBUG: server.js - Requiring ALL Route Files >>>>>");
 const userRoutes = require('./routes/userRoutes');
 const transactionRoutes = require('./routes/transactionRoutes');
 const ledgerRoutes = require('./routes/ledgerRoutes');
@@ -24,10 +15,10 @@ const reportRoutes = require('./routes/reportRoutes');
 const lenderRoutes = require('./routes/lenderRoutes');
 const businessAgreementRoutes = require('./routes/businessAgreementRoutes');
 const productRoutes = require('./routes/productRoutes');
-const productSupplierRoutes = require('./routes/productSupplierRoutes'); // Ensure this is present
+const productSupplierRoutes = require('./routes/productSupplierRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const auditLogRoutesFromFile = require('./routes/auditLogRoutes');
-console.log("<<<<< DEBUG: server.js - ALL Route Files Required >>>>>");
+const authRoutes = require('./routes/authRoutes');
 
 const app = express();
 
@@ -37,9 +28,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // --- Static Files Middleware ---
+// This serves CSS, JS, etc. from the root URL. E.g. /css/style.css
 app.use(express.static(path.join(__dirname, 'frontend/assets')));
-console.log("<<<<< DEBUG: server.js - Serving static files from frontend/assets at root URL >>>>>");
-
 
 // --- Custom Request Logging Middleware ---
 app.use((req, res, next) => {
@@ -56,38 +46,49 @@ app.use((req, res, next) => {
 // --- Authentication Middleware ---
 app.use(authMiddleware);
 
-// --- Audit Logging Middleware for API routes ---
-app.use('/api', auditLogMiddleware);
+// --- API Router Setup ---
+const apiRouter = express.Router();
+
+// Public API route (login)
+apiRouter.use('/auth', authRoutes);
+
+// Protected API routes
+apiRouter.use('/users', checkAuth, auditLogMiddleware, userRoutes);
+apiRouter.use('/transactions', checkAuth, auditLogMiddleware, transactionRoutes);
+apiRouter.use('/external-entities', checkAuth, auditLogMiddleware, lenderRoutes);
+apiRouter.use('/business-agreements', checkAuth, auditLogMiddleware, businessAgreementRoutes);
+apiRouter.use('/products', checkAuth, auditLogMiddleware, productRoutes);
+apiRouter.use('/product-suppliers', checkAuth, auditLogMiddleware, productSupplierRoutes);
+apiRouter.use('/invoices', checkAuth, auditLogMiddleware, invoiceRoutes);
+apiRouter.use('/ledger', checkAuth, ledgerRoutes);
+apiRouter.use('/reports', checkAuth, reportRoutes);
+apiRouter.use('/auditlog', checkAuth, checkRole(['admin']), auditLogRoutesFromFile);
+
+// Mount the entire API router under the /api prefix
+app.use('/api', apiRouter);
 
 
-// --- API Routes ---
-console.log("<<<<< DEBUG: server.js - Mounting API Routes >>>>>");
-app.use('/api/users', userRoutes);
-app.use('/api/transactions', transactionRoutes);
-app.use('/api/ledger', ledgerRoutes);
-app.use('/api/reports', reportRoutes);
-app.use('/api/external-entities', lenderRoutes);
-app.use('/api/business-agreements', businessAgreementRoutes);
-app.use('/api/products', productRoutes);
-app.use('/api/product-suppliers', productSupplierRoutes); // Ensure this is present and used
-app.use('/api/invoices', invoiceRoutes);
-app.use('/api/auditlog', checkRole(['admin']), auditLogRoutesFromFile);
-console.log("<<<<< DEBUG: server.js - API Routes Mounted >>>>>");
+// --- Frontend Route Handling ---
+// This section now correctly handles serving login.html and index.html
 
-
-// --- API Specific 404 Handler ---
-app.use(/^\/api\/.*/, (req, res, next) => {
-  console.log(`❌ API Route Not Found (RegExp API 404): ${req.method} ${req.originalUrl}`);
-  return res.status(404).json({ error: 'The requested API endpoint was not found.' });
+// Specifically handle the /login route to serve login.html
+app.get('/login', (req, res) => {
+    // If a user is already logged in, redirect them to the dashboard instead of showing the login page.
+    if (req.user) {
+        return res.redirect('/');
+    }
+    res.sendFile(path.join(__dirname, 'frontend/assets/login.html'));
 });
-console.log("<<<<< DEBUG: server.js - RegExp API Specific 404 Handler is ACTIVE >>>>>");
 
-// --- Frontend Catch-all Route (for Single Page Applications) ---
-app.get(/^((?!\/api\/|\/[^/.]+\.[^/.]+).)*$|^(\/$)(?!.*\.\w{2,5}$)/, (req, res) => {
-    console.log(`ℹ️ Serving index.html for SPA frontend route (RegExp): ${req.originalUrl}`);
+// The catch-all for serving the main app (index.html) for any other route
+app.get('*', (req, res) => {
+    // If a user is not logged in, redirect them to the /login page.
+    if (!req.user) {
+        return res.redirect('/login');
+    }
+    // If they are logged in, serve the main application.
     res.sendFile(path.join(__dirname, 'frontend/assets/index.html'));
 });
-console.log("<<<<< DEBUG: server.js - RegExp Frontend Catch-all app.get() is ACTIVE (serving from assets) >>>>>");
 
 
 // --- Global Error Handler ---
@@ -104,23 +105,16 @@ app.use((err, req, res, next) => {
   });
 });
 
-// --- Ultimate Fallback 404 (if truly nothing matched) ---
-app.use((req, res) => {
-    console.log(`❌ Ultimate Fallback 404 Handler (No Route Matched): ${req.method} ${req.originalUrl}`);
-    res.status(404).json({ error: "The requested resource was not found on this server (ultimate fallback)." });
-});
-
 
 // --- Start Server ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
-  if (db && typeof db.get === 'function') {
-    db.get("SELECT 1", (err) => {
-        if(err) console.error("❌ Failed to make a test query to SQLite DB (server.js):", err.message);
-        else console.log("✅ Connected to SQLite DB (test query successful from server.js).");
-    });
-  } else {
-    console.warn("⚠️ DB object not fully initialized or 'get' method missing for test query (server.js).");
-  }
+  db.get("SELECT 1", (err) => {
+      if(err) {
+        console.error("❌ SQLite test query failed: " + err.message);
+      } else {
+        console.log("✅ SQLite DB connection OK.");
+      }
+  });
 });

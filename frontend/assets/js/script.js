@@ -7,6 +7,7 @@ let editingProductId = null;
 let editingInvoiceId = null;
 let currentLinkingProductId = null;
 let editingProductSupplierLinkId = null;
+let currentUser = null;
 
 let usersDataCache = [];
 let allTransactionsCache = [];
@@ -28,6 +29,7 @@ let isLoadingBusinessProfile = false;
 // For Chart instances - DECLARE THEM GLOBALLY ONCE
 let revenueChartInstance = null;
 let categoryChartInstance = null;
+let cashFlowChartInstance = null; // Added for new report
 
 // DETAILED categories - used by ledgers, reports, and displayTransactions (if showing business flow)
 const transactionCategories = [
@@ -36,9 +38,14 @@ const transactionCategories = [
     { name: "Sale to Customer (On Credit)", type: "receivable_increase", group: "customer_revenue", isProductSale: true, affectsLedger: "none", relevantTo: "customer" },
     { name: "Sale to Customer (Cash)", type: "cash_income", group: "customer_revenue", isProductSale: true, affectsLedger: "cash", relevantTo: "customer" },
     { name: "Sale to Customer (Bank)", type: "bank_income", group: "customer_revenue", isProductSale: true, affectsLedger: "bank", relevantTo: "customer" },
+    { name: "Sale to Customer (Cash/Direct)", type: "cash_income", group: "customer_revenue", isProductSale: true, affectsLedger: "cash", relevantTo: "customer" }, // Added for calculation
+
     // Payments from Customers
     { name: "Payment Received from Customer (Cash)", type: "cash_income", group: "customer_payment", affectsLedger: "cash", relevantTo: "customer" },
     { name: "Payment Received from Customer (Bank)", type: "bank_income", group: "customer_payment", affectsLedger: "bank", relevantTo: "customer" },
+    { name: "Amount Received in Bank (from Customer/Other)", type: "bank_income", group: "customer_payment", affectsLedger: "bank", relevantTo: "customer" }, // Added for calculation
+    { name: "Payment Received from Customer", type: "unknown_income_OR_asset_decrease", group: "customer_payment", affectsLedger: "unknown", relevantTo: "customer" }, // Added for calculation (generic)
+
     // Customer Loans
     { name: "Loan Disbursed to Customer (Cash)", type: "cash_expense_asset", group: "customer_loan_out", affectsLedger: "cash", relevantTo: "customer" },
     { name: "Loan Disbursed to Customer (Bank)", type: "bank_expense_asset", group: "customer_loan_out", affectsLedger: "bank", relevantTo: "customer" },
@@ -61,6 +68,7 @@ const transactionCategories = [
     { name: "Purchase from Supplier (On Credit)", type: "payable_increase", group: "supplier_expense", isProductPurchase: true, affectsLedger: "none", relevantTo: "lender" },
     { name: "Purchase from Supplier (Cash)", type: "cash_expense", group: "supplier_expense", isProductPurchase: true, affectsLedger: "cash", relevantTo: "lender" },
     { name: "Purchase from Supplier (Bank)", type: "bank_expense", group: "supplier_expense", isProductPurchase: true, affectsLedger: "bank", relevantTo: "lender" },
+    { name: "Initial Stock Purchase (On Credit)", type: "payable_increase", group: "supplier_expense", isProductPurchase: true, affectsLedger: "none", relevantTo: "lender" }, // For auto-creation
     // Payments to Suppliers
     { name: "Payment Made to Supplier (Cash)", type: "cash_expense", group: "supplier_payment", affectsLedger: "cash", relevantTo: "lender" },
     { name: "Payment Made to Supplier (Bank)", type: "bank_expense", group: "supplier_payment", affectsLedger: "bank", relevantTo: "lender" },
@@ -109,8 +117,6 @@ const transactionCategories = [
     { name: "Stock Adjustment (Increase)", type: "neutral_stock", group: "inventory_adjustment", isProductPurchase: true, affectsLedger: "none", relevantTo: "none" },
     { name: "Stock Adjustment (Decrease)", type: "neutral_stock", group: "inventory_adjustment", isProductSale: true, affectsLedger: "none", relevantTo: "none" },
 ];
-
-// SIMPLIFIED categories for the modal dropdown
 const baseTransactionCategories = [
     // -- Customer --
     { name: "Sale to Customer", group: "customer_revenue", isProductSale: true, relevantTo: "customer", needsPaymentMode: true, defaultSignForParty: 1, categoryPattern: "Sale to Customer ({PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" },
@@ -120,6 +126,8 @@ const baseTransactionCategories = [
     { name: "Interest on Customer Loan Received", group: "customer_loan_in", relevantTo: "customer", needsPaymentMode: true, defaultSignForParty: -1, categoryPattern: "Interest on Customer Loan Received ({PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" },
     { name: "Product Return from Customer (Refund)", group: "customer_return", isProductSale: true, relevantTo: "customer", needsPaymentMode: true, defaultSignForParty: 1, categoryPattern: "Product Return from Customer (Refund via {PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" }, // Business pays out
     { name: "Product Return from Customer (Credit Note)", group: "customer_return", isProductSale: true, relevantTo: "customer", needsPaymentMode: false, defaultSignForParty: -1, categoryPattern: "Product Return from Customer (Credit Note)", affectsLedgerPattern: "none" },
+    { name: "Amount Received in Bank (from Customer/Other)", group: "customer_payment", relevantTo: "customer", needsPaymentMode: false, defaultSignForParty: -1, categoryPattern: "Amount Received in Bank (from Customer/Other)", affectsLedgerPattern: "bank" },
+    { name: "Sale to Customer (Cash/Direct)", group: "customer_revenue", isProductSale: true, relevantTo: "customer", needsPaymentMode: false, defaultSignForParty: 1, categoryPattern: "Sale to Customer (Cash/Direct)", affectsLedgerPattern: "cash" },
 
     // -- Supplier --
     { name: "Purchase from Supplier", group: "supplier_expense", isProductPurchase: true, relevantTo: "lender", needsPaymentMode: true, defaultSignForParty: 1, categoryPattern: "Purchase from Supplier ({PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" },
@@ -151,105 +159,110 @@ const baseTransactionCategories = [
     { name: "Stock Adjustment (Decrease)", group: "inventory_adjustment", isProductSale: true, relevantTo: "none", needsPaymentMode: false, defaultSignForParty: 0, categoryPattern: "Stock Adjustment (Decrease)", affectsLedgerPattern: "none" },
 ];
 
-function getFullCategoryDetails(baseCategoryName, paymentMode) {
-    console.log(`getFullCategoryDetails called with: base='${baseCategoryName}', mode='${paymentMode}'`);
-    const baseCat = baseTransactionCategories.find(c => c.name === baseCategoryName);
-    
-    if (!baseCat) {
-        const directMatch = transactionCategories.find(tc => tc.name === baseCategoryName);
-        if (directMatch) {
-            console.warn(`getFullCategoryDetails: '${baseCategoryName}' used directly, found in detailed list.`);
-            return { 
-                fullCategoryName: directMatch.name, 
-                affectsLedger: directMatch.affectsLedger, 
-                type: directMatch.type,
-                isProductSale: directMatch.isProductSale,
-                isProductPurchase: directMatch.isProductPurchase,
-                group: directMatch.group,
-                defaultSignForParty: directMatch.defaultSignForParty, // Ensure detailed has this if used
-                relevantTo: directMatch.relevantTo
-            };
-        }
-        console.error(`getFullCategoryDetails: Base category '${baseCategoryName}' not found.`);
-        return { fullCategoryName: baseCategoryName, affectsLedger: "none", type: "unknown", relevantTo: "none", group: "unknown", defaultSignForParty: 0 };
-    }
-
-    let fullCategoryName = baseCat.categoryPattern;
-    let affectsLedgerValue = baseCat.affectsLedgerPattern || "none"; 
-    let categoryType = baseCat.type || (baseCat.defaultSignForParty === 1 ? "income" : (baseCat.defaultSignForParty === -1 ? "expense" : "neutral"));
-
-    if (baseCat.needsPaymentMode && paymentMode) {
-        if (paymentMode === "On Credit") {
-            if (baseCat.name === "Sale to Customer") fullCategoryName = "Sale to Customer (On Credit)";
-            else if (baseCat.name === "Purchase from Supplier") fullCategoryName = "Purchase from Supplier (On Credit)";
-            else if (baseCat.name === "Product Return from Customer (Refund)") fullCategoryName = "Product Return from Customer (Credit Note)"; 
-            else if (baseCat.name === "Product Return to Supplier (Refund Recvd)") fullCategoryName = "Product Return to Supplier (Credit Received)";
-            else {
-                 console.warn(`Category '${baseCategoryName}' with paymentMode 'On Credit' might not have a direct detailed match. Using base name or specific 'On Credit' version if defined.`);
-                 const onCreditVersion = transactionCategories.find(tc => tc.name === `${baseCat.name} (On Credit)`);
-                 if (onCreditVersion) fullCategoryName = onCreditVersion.name;
-                 else fullCategoryName = baseCat.name; 
-            }
-            affectsLedgerValue = "none"; 
-        } else if (paymentMode === "Cash" || paymentMode === "Bank") {
-            fullCategoryName = fullCategoryName.replace("{PaymentMode}", paymentMode)
-                                             .replace("{PaymentModeDestination}", `(to ${paymentMode})`) 
-                                             .replace("{PaymentModeSource}", `(from ${paymentMode})`);
-            affectsLedgerValue = affectsLedgerValue.replace("{PaymentModeLowerCase}", paymentMode.toLowerCase());
-        } else {
-            console.warn(`Category '${baseCategoryName}' needs payment mode, but received invalid mode '${paymentMode}'.`);
-            fullCategoryName = baseCat.name; 
-        }
-    } else if (baseCat.fixedPaymentMode) { 
-        fullCategoryName = baseCat.categoryPattern; 
-        affectsLedgerValue = baseCat.fixedPaymentMode.toLowerCase();
-    } else if (!baseCat.needsPaymentMode) {
-        fullCategoryName = baseCat.categoryPattern; 
-        affectsLedgerValue = baseCat.affectsLedgerPattern || "none";
-    } else {
-        console.error(`Category '${baseCategoryName}' requires a payment mode, but none was provided.`);
-        fullCategoryName = baseCat.name; 
-    }
-    
-    const originalDetailedCategory = transactionCategories.find(tc => tc.name === fullCategoryName);
-
-    const result = {
-        fullCategoryName: fullCategoryName,
-        affectsLedger: originalDetailedCategory ? originalDetailedCategory.affectsLedger : affectsLedgerValue, 
-        type: originalDetailedCategory ? originalDetailedCategory.type : categoryType, 
-        isProductSale: originalDetailedCategory ? originalDetailedCategory.isProductSale : baseCat.isProductSale,
-        isProductPurchase: originalDetailedCategory ? originalDetailedCategory.isProductPurchase : baseCat.isProductPurchase,
-        group: originalDetailedCategory ? originalDetailedCategory.group : baseCat.group,
-        defaultSignForParty: originalDetailedCategory ? originalDetailedCategory.defaultSignForParty : baseCat.defaultSignForParty,
-        relevantTo: originalDetailedCategory ? originalDetailedCategory.relevantTo : baseCat.relevantTo
+async function apiFetch(endpoint, options = {}) {
+    const token = localStorage.getItem('erp-token');
+    const headers = {
+        'Content-Type': 'application/json',
+        ...options.headers,
     };
-    console.log("getFullCategoryDetails returning:", result);
-    return result;
+
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const res = await fetch(endpoint, { ...options, headers });
+
+    if (res.status === 401) {
+        // Unauthorized - token is invalid or expired
+        logout(); // Force logout
+        return; // Stop execution
+    }
+    return res;
+}
+
+// The original DOMContentLoaded listener now only contains the app setup logic
+// and will only run if the user is authenticated and on the main page.
+document.addEventListener("DOMContentLoaded", () => {
+    // Only run setup if we are on the main page, not the login page.
+    if (window.location.pathname.endsWith('/login.html') || window.location.pathname.endsWith('/login')) {
+        return;
+    }
+    
+    // This part of the code now assumes a valid token exists.
+    initializeApp();
+});
+
+async function initializeApp() {
+    try {
+        const res = await apiFetch(`${API}/auth/me`);
+        if (!res || !res.ok) throw new Error('Session invalid');
+        
+        currentUser = await res.json();
+        console.log("Authenticated user:", currentUser);
+
+        updateHeaderProfile(currentUser);
+        setupEventListeners();
+        loadInitialData();
+        setupNavigation();
+
+    } catch (error) {
+        console.error("Authentication check failed:", error);
+        logout(); // Clear bad token and redirect
+    }
+}
+
+function updateHeaderProfile(user) {
+    if (!user) return;
+    const userNameEl = document.querySelector('.user-profile .user-name');
+    const userRoleEl = document.querySelector('.user-profile .user-role');
+
+    if (userNameEl) userNameEl.textContent = user.username;
+    if (userRoleEl) userRoleEl.textContent = user.role.charAt(0).toUpperCase() + user.role.slice(1);
+}
+
+function logout() {
+    localStorage.removeItem('erp-token');
+    // Clear all cached data to prevent stale info on next login
+    currentUser = null;
+    usersDataCache = [];
+    allTransactionsCache = [];
+    externalEntitiesCache = [];
+    businessAgreementsCache = [];
+    productsCache = [];
+    invoicesCache = [];
+    window.location.replace('/login');
 }
 
 
-document.addEventListener("DOMContentLoaded", () => {
-    loadInitialData();
-    setupEventListeners();
-    setupNavigation();
-});
+function getSectionIdFromPath(path = window.location.pathname) {
+    const map = {
+        '/': 'dashboardAnalytics',
+        '/dashboard': 'dashboardAnalytics',
+        '/customers': 'customerManagementSection',
+        '/suppliers': 'supplierManagementSection',
+        '/inventory': 'inventoryManagementSection',
+        '/invoices': 'invoiceManagementSection',
+        '/transactions': 'allTransactionsSection',
+        '/ledgers': 'ledgersSection',
+        '/finance': 'businessFinanceSection',
+        '/reports': 'reportsSection'
+    };
+    return map[path] || 'dashboardAnalytics';
+}
 
 async function loadInitialData() {
     await Promise.all([
         loadUsers(),
         loadAllTransactions(), 
-        loadLenders(), 
-        loadBusinessExternalFinanceAgreements(),
+        loadLenders(null, true), 
         loadProducts(),
         loadInvoices(),
         loadBusinessProfile(),
     ]);
-    populateTransactionCategoryDropdown(); 
-    updateDashboardCards();
-    initializeDashboardCharts();
-    loadRecentActivity();
-    const dashboardNavItem = document.querySelector('.sidebar-nav .nav-item[data-section="dashboardAnalytics"]');
-    if (dashboardNavItem) dashboardNavItem.click();
+    await loadBusinessExternalFinanceAgreements();
+    populateTransactionCategoryDropdown();
+    const initialSectionId = getSectionIdFromPath();
+    navigateToSection(initialSectionId);
 }
 
 async function loadBusinessProfile() {
@@ -257,8 +270,8 @@ async function loadBusinessProfile() {
         return businessProfileCache;
     isLoadingBusinessProfile = true;
     try {
-        const res = await fetch(`${API}/invoices/config/business-profile`);
-        if (!res.ok) {
+        const res = await apiFetch(`${API}/invoices/config/business-profile`);
+        if (!res || !res.ok) {
             const errText = await res
                 .text()
                 .catch(() => "Could not read error response.");
@@ -323,6 +336,7 @@ function setupEventListeners() {
     document
         .getElementById("productSupplierLinkForm")
         .addEventListener("submit", handleProductSupplierLinkSubmit);
+    document.getElementById('repayLoanForm').addEventListener('submit', handleLoanRepaymentSubmit);
 
     const userTxHistoryFilter = document.getElementById(
         "userTxHistoryCategoryFilter",
@@ -498,7 +512,7 @@ function closeAddNewDropdown() {
 function navigateToSection(sectionId) {
     document.querySelectorAll('.sidebar-nav .nav-item').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.app-section').forEach(sec => sec.style.display = 'none');
-    
+
     const targetNavItem = document.querySelector(`.sidebar-nav .nav-item[data-section="${sectionId}"]`);
     const targetSection = document.getElementById(sectionId);
     const mainHeader = document.getElementById("mainHeaderText");
@@ -507,7 +521,7 @@ function navigateToSection(sectionId) {
         targetNavItem.classList.add('active');
         targetSection.style.display = 'block';
 
-        let headerText = targetNavItem.textContent.replace(/[0-9]/g, '').trim(); 
+        let headerText = targetNavItem.textContent.replace(/[0-9]/g, '').trim();
         if (headerText.includes("Dashboard")) headerText = "Dashboard";
         else if (headerText.includes("Customers")) headerText = "Customer Management";
         else if (headerText.includes("Suppliers")) headerText = "Supplier Management";
@@ -516,14 +530,13 @@ function navigateToSection(sectionId) {
         else if (headerText.includes("Transactions")) headerText = "All Transactions";
         else if (headerText.includes("Ledgers")) headerText = "Business Ledgers";
         else if (headerText.includes("Business Finance")) headerText = "Business Finance";
-        else if (headerText.includes("Reports")) headerText = "Financial Reports";
-        
-        if(mainHeader) mainHeader.textContent = headerText;
+        else if (headerText.includes("Reports")) headerText = "Reports & Analytics"; // Updated header text
 
+        if(mainHeader) mainHeader.textContent = headerText;
 
         if (sectionId === "dashboardAnalytics") {
             updateDashboardCards();
-            initializeDashboardCharts(); 
+            initializeDashboardCharts();
             loadRecentActivity();
         } else if (sectionId === "customerManagementSection") {
             loadUsers().then(() => loadCustomerSummaries());
@@ -538,13 +551,30 @@ function navigateToSection(sectionId) {
         } else if (sectionId === "ledgersSection") {
             showLedger('cash');
         } else if (sectionId === "businessFinanceSection") {
-            loadLenders().then(() => populateAgreementEntityDropdown()); 
-            loadBusinessExternalFinanceAgreements();
+            loadAllTransactions().then(() => {
+                loadLenders(null, true).then(() => {
+                    populateAgreementEntityDropdown();
+                    loadBusinessExternalFinanceAgreements();
+                });
+            });
         } else if (sectionId === "reportsSection") {
-            loadReportDefaults();
+            // New logic for reports section navigation
+            const reportPeriodMonth = document.getElementById('reportPeriodMonth');
+            if (reportPeriodMonth) {
+                reportPeriodMonth.value = new Date().toISOString().slice(0, 7);
+            }
+            const reportDisplayArea = document.getElementById('reportDisplayArea');
+            if (reportDisplayArea) {
+                reportDisplayArea.style.display = 'none';
+                reportDisplayArea.innerHTML = ''; // Clear previous report
+            }
         }
+    } else {
+        console.error(`ERROR: Could NOT find targetNavItem or targetSection for ${sectionId}`);
     }
-    document.getElementById("globalSearchResults").style.display = "none";
+
+    const globalSearchResultsDiv = document.getElementById("globalSearchResults");
+    if (globalSearchResultsDiv) globalSearchResultsDiv.style.display = "none";
     const globalSearchInputElem = document.getElementById("globalSearchInput");
     if (globalSearchInputElem) globalSearchInputElem.value = "";
 
@@ -555,115 +585,185 @@ function navigateToSection(sectionId) {
 }
 
 
+
 function setupNavigation() {
-    document.querySelectorAll(".sidebar-nav .nav-item").forEach(item => {
+    console.log("setupNavigation CALLED"); // Debug
+    const navItems = document.querySelectorAll(".sidebar-nav .nav-item");
+    console.log(`Found ${navItems.length} nav items to attach listeners to.`); // Debug
+
+    navItems.forEach(item => {
+        console.log(`Attaching listener to: ${item.dataset.section}`); // Debug
         item.addEventListener("click", (e) => {
             e.preventDefault();
             const sectionId = item.dataset.section;
+            console.log(`CLICKED on nav item for sectionId: ${sectionId}`); // Debug
             navigateToSection(sectionId);
         });
     });
 }
+function getPeriodDateRanges(period) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    let currentStart, currentEnd, previousStart, previousEnd;
 
+    switch (period) {
+        case 'last_month':
+            currentStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+            currentEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+            previousStart = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+            previousEnd = new Date(today.getFullYear(), today.getMonth() - 1, 0);
+            break;
+
+        case 'this_quarter':
+            const quarter = Math.floor(today.getMonth() / 3);
+            currentStart = new Date(today.getFullYear(), quarter * 3, 1);
+            currentEnd = new Date(today.getFullYear(), quarter * 3 + 3, 0);
+            previousStart = new Date(today.getFullYear(), (quarter - 1) * 3, 1);
+            previousEnd = new Date(today.getFullYear(), quarter * 3, 0);
+            break;
+
+        case 'this_year':
+            currentStart = new Date(today.getFullYear(), 0, 1);
+            currentEnd = new Date(today.getFullYear(), 11, 31);
+            previousStart = new Date(today.getFullYear() - 1, 0, 1);
+            previousEnd = new Date(today.getFullYear() - 1, 11, 31);
+            break;
+
+        case 'this_month':
+        default:
+            currentStart = new Date(today.getFullYear(), today.getMonth(), 1);
+            currentEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+            previousStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+            previousEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+            break;
+    }
+    return { currentStart, currentEnd, previousStart, previousEnd };
+}
+
+function calculatePercentageChange(current, previous) {
+    if (previous === 0) {
+        return current > 0 ? 100 : 0; // Show 100% growth if starting from 0
+    }
+    return ((current - previous) / previous) * 100;
+}
+
+// In script.js, find and replace this function
 
 function updateDashboardCards() {
-    document.getElementById('navCustomerCount').textContent = usersDataCache.length;
+    console.log("updateDashboardCards CALLED");
+    
+    // --- THIS IS THE KEY CHANGE for the dashboard counts ---
+    const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
+
+    document.getElementById('navCustomerCount').textContent = customersOnly.length;
     document.getElementById('navSupplierCount').textContent = externalEntitiesCache.filter(e => e.entity_type === 'Supplier').length;
     document.getElementById('navInventoryCount').textContent = productsCache.length;
     document.getElementById('navInvoiceCount').textContent = invoicesCache.length;
 
+    const period = document.getElementById('dashboardPeriod')?.value || 'this_month';
+    const ranges = getPeriodDateRanges(period);
 
-    const totalCustomersEl = document.getElementById("totalCustomers");
-    const totalProductsEl = document.getElementById("totalProducts");
-    const monthlyRevenueEl = document.getElementById("monthlyRevenue");
-    const pendingInvoicesEl = document.getElementById("pendingInvoices");
-    const pendingAmountEl = document.getElementById("pendingAmount");
-    const lowStockAlertEl = document.getElementById("lowStockAlert");
-    const customersChangeEl = document.getElementById("customersChange");
-    const revenueChangeEl = document.getElementById("revenueChange");
-    
-    document.getElementById('todayRevenue').textContent = "₹0.00"; 
-    document.getElementById('todayOrders').textContent = "0"; 
-    document.getElementById('todayAvgOrder').textContent = "₹0.00";
+    let currentRevenue = 0;
+    let previousRevenue = 0;
+    let newCustomersCurrent = 0;
 
-
-    if (totalCustomersEl) totalCustomersEl.textContent = usersDataCache.length;
-    if (totalProductsEl) totalProductsEl.textContent = productsCache.length;
-
-    const now = new Date();
-    const daysInPeriod = parseInt(document.getElementById('dashboardPeriod')?.value || 30);
-
-    const periodStartDate = new Date(now);
-    periodStartDate.setDate(now.getDate() - daysInPeriod + 1); 
-
-    const periodTransactions = allTransactionsCache.filter(tx => {
-        const txDate = new Date(tx.date || tx.transaction_date);
-        return txDate >= periodStartDate && txDate <= now;
+    invoicesCache.forEach(inv => {
+        const invDate = new Date(inv.invoice_date);
+        if (inv.status !== 'Void' && inv.status !== 'Draft') {
+            const revenue = parseFloat(inv.amount_before_tax || 0);
+            if (invDate >= ranges.currentStart && invDate <= ranges.currentEnd) {
+                currentRevenue += revenue;
+            } else if (invDate >= ranges.previousStart && invDate <= ranges.previousEnd) {
+                previousRevenue += revenue;
+            }
+        }
     });
 
-    const periodRevenue = periodTransactions
-        .filter(tx => {
-             const detailedCatInfo = transactionCategories.find(c => c.name === tx.category);
-             return detailedCatInfo && detailedCatInfo.group === "customer_revenue" && parseFloat(tx.amount || 0) > 0;
-        })
-        .reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
+    // Use the filtered 'customersOnly' array for this calculation
+    customersOnly.forEach(user => {
+        const joinDate = new Date(user.created_at);
+        if (joinDate >= ranges.currentStart && joinDate <= ranges.currentEnd) {
+            newCustomersCurrent++;
+        }
+    });
 
-    if (monthlyRevenueEl) monthlyRevenueEl.textContent = `₹${periodRevenue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    // --- Update KPI Card DOM Elements ---
+    document.getElementById("monthlyRevenue").textContent = `₹${currentRevenue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    const revenueChangeEl = document.getElementById("revenueChange");
+    const revenueChangePercent = calculatePercentageChange(currentRevenue, previousRevenue);
+    revenueChangeEl.textContent = `${revenueChangePercent >= 0 ? '+' : ''}${revenueChangePercent.toFixed(1)}%`;
+    revenueChangeEl.className = revenueChangePercent >= 0 ? 'kpi-change positive' : 'kpi-change negative';
+
+    // Update the total customer count to also use the filtered list
+    document.getElementById("totalCustomers").textContent = customersOnly.length;
+    document.getElementById("customersChange").textContent = `+${newCustomersCurrent} new`;
     
+    // --- Non-period-based KPI calculations (these are totals, not period-dependent) ---
+    document.getElementById("totalProducts").textContent = productsCache.length;
+
     const pendingInv = invoicesCache.filter(inv => inv.status !== "Paid" && inv.status !== "Void");
     const pendingAmt = pendingInv.reduce((sum, inv) => sum + parseFloat(inv.total_amount || 0) - parseFloat(inv.paid_amount || 0), 0);
+    document.getElementById("pendingInvoices").textContent = `${pendingInv.length} invoices`;
+    document.getElementById("pendingAmount").textContent = `₹${pendingAmt.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
 
-    if (pendingInvoicesEl) pendingInvoicesEl.textContent = `${pendingInv.length} invoices`;
-    if (pendingAmountEl) pendingAmountEl.textContent = `₹${pendingAmt.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-
-    const lowStockCount = productsCache.filter(product => {
-        const currentStock = parseInt(product.current_stock || 0);
-        const minLevel = parseInt(product.low_stock_threshold || 0); 
-        return minLevel > 0 && currentStock <= minLevel; 
-    }).length;
-
-    if (lowStockAlertEl) {
-        lowStockAlertEl.textContent = `${lowStockCount} low stock`;
-        lowStockAlertEl.style.color = lowStockCount > 0 ? 'var(--danger-color)' : 'var(--text-light-color)';
-    }
-
-    if (customersChangeEl) customersChangeEl.textContent = `+${Math.floor(Math.random()*5 +1)} new`; 
-    if (revenueChangeEl) {
-        const mockChange = (Math.random() * 20 - 5).toFixed(1); 
-        revenueChangeEl.textContent = `${mockChange >= 0 ? '+' : ''}${mockChange}%`;
-        revenueChangeEl.className = mockChange >= 0 ? 'kpi-change positive' : 'kpi-change negative';
-    }
+    const lowStockCount = productsCache.filter(p => p.low_stock_threshold > 0 && p.current_stock <= p.low_stock_threshold).length;
+    const lowStockAlertEl = document.getElementById("lowStockAlert");
+    lowStockAlertEl.textContent = `${lowStockCount} low stock`;
+    lowStockAlertEl.style.color = lowStockCount > 0 ? 'var(--danger-color)' : 'var(--text-light-color)';
+    
+    // --- Today's Sales Calculation ---
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todaysInvoices = invoicesCache.filter(inv => inv.invoice_date.startsWith(todayStr) && inv.status !== 'Void' && inv.status !== 'Draft');
+    const todaysRevenue = todaysInvoices.reduce((sum, inv) => sum + parseFloat(inv.amount_before_tax || 0), 0);
+    const avgOrderValue = todaysInvoices.length > 0 ? todaysRevenue / todaysInvoices.length : 0;
+    
+    document.getElementById('todayRevenue').textContent = `₹${todaysRevenue.toFixed(2)}`;
+    document.getElementById('todayOrders').textContent = todaysInvoices.length;
+    document.getElementById('todayAvgOrder').textContent = `₹${avgOrderValue.toFixed(2)}`;
 }
+// In script.js
 
+// Replace the existing populateUserDropdown function with this one.
+// In script.js
 
+// Replace the existing populateUserDropdown function with this one
 async function populateUserDropdown() {
     try {
-        if (!Array.isArray(usersDataCache) || (usersDataCache.length === 0 && !isLoadingUsers))
+        if (!Array.isArray(usersDataCache) || (usersDataCache.length === 0 && !isLoadingUsers)) {
             await loadUsers();
+        }
+        
         const dropdown = document.getElementById("transaction_user_id");
         if (!dropdown) return;
+
+        // --- THIS IS THE KEY CORRECTION ---
+        // Filter out any user with the 'admin' role
+        const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
+
         const currentValue = dropdown.value;
-        dropdown.innerHTML =
-            '<option value="">Select Customer...</option>';
-        if (Array.isArray(usersDataCache)) {
-            usersDataCache.forEach((user) => {
+        dropdown.innerHTML = '<option value="">Select Customer...</option>';
+        
+        // Use the filtered 'customersOnly' array to build the options
+        if (Array.isArray(customersOnly)) {
+            customersOnly.forEach((user) => {
                 const option = document.createElement("option");
                 option.value = user.id;
                 option.textContent = `${user.username} (ID: ${user.id})`;
                 dropdown.appendChild(option);
             });
         }
+
         if (currentValue) {
-            const exists =
-                Array.isArray(usersDataCache) &&
-                usersDataCache.some((user) => user.id == currentValue);
-            if (exists) dropdown.value = currentValue;
+            // Check if the previously selected value still exists in the filtered list
+            const exists = customersOnly.some((user) => user.id == currentValue);
+            if (exists) {
+                dropdown.value = currentValue;
+            }
         }
     } catch (error) {
         console.error("Error populating user dropdown:", error.message);
     }
 }
-
 // Modified to populate with baseTransactionCategories
 function populateTransactionCategoryDropdown() {
     const dropdown = document.getElementById("category"); 
@@ -745,8 +845,8 @@ async function loadUsers() {
     if (isLoadingUsers) return usersDataCache;
     isLoadingUsers = true;
     try {
-        const res = await fetch(`${API}/users`);
-        if (!res.ok) {
+        const res = await apiFetch(`${API}/users`);
+        if (!res || !res.ok) {
             const errTxt = await res
                 .text()
                 .catch(() => "Could not read error response.");
@@ -770,8 +870,8 @@ async function loadAllTransactions() {
     if (isLoadingTransactions) return allTransactionsCache;
     isLoadingTransactions = true;
     try {
-        const res = await fetch(`${API}/transactions`);
-        if (!res.ok) {
+        const res = await apiFetch(`${API}/transactions`);
+        if (!res || !res.ok) {
             const errTxt = await res
                 .text()
                 .catch(() => "Could not read error response.");
@@ -807,7 +907,6 @@ function displayTransactions(transactionsToDisplay) {
         return;
     }
     const tbody = table.querySelector("tbody") || table;
-    console.log("Target tbody for transactions:", tbody); 
     tbody.innerHTML = ""; 
     if (
         !Array.isArray(transactionsToDisplay) ||
@@ -832,37 +931,11 @@ function displayTransactions(transactionsToDisplay) {
                 : tx.external_entity_name || `Ext. ID ${tx.lender_id}`;
         }
 
-        let displayedAmount = parseFloat(tx.amount);
-        const originalTxCategoryInfo = transactionCategories.find(c => c.name === tx.category); 
-
-        if (originalTxCategoryInfo && (originalTxCategoryInfo.affectsLedger === 'cash' || originalTxCategoryInfo.affectsLedger === 'bank')) {
-            if (originalTxCategoryInfo.type.includes("income") || 
-                (originalTxCategoryInfo.group === "customer_payment" && displayedAmount < 0) || 
-                (originalTxCategoryInfo.group === "supplier_return" && displayedAmount > 0 && (originalTxCategoryInfo.name.toLowerCase().includes("cash refund") || originalTxCategoryInfo.name.toLowerCase().includes("bank refund"))) ||
-                ((originalTxCategoryInfo.name === "Sale to Customer (Cash)" || originalTxCategoryInfo.name === "Sale to Customer (Bank)") && displayedAmount > 0) ||
-                (((originalTxCategoryInfo.name === "Loan Received by Business (Cash)") || originalTxCategoryInfo.name === "Loan Received by Business (to Bank)") && displayedAmount > 0)
-               ) {
-                displayedAmount = Math.abs(displayedAmount); 
-            } 
-            else if (originalTxCategoryInfo.type.includes("expense") || 
-                     (originalTxCategoryInfo.group === "supplier_payment" && displayedAmount < 0) || 
-                     (originalTxCategoryInfo.group === "customer_return" && displayedAmount > 0 && (originalTxCategoryInfo.name.toLowerCase().includes("refund via cash") || originalTxCategoryInfo.name.toLowerCase().includes("refund via bank"))) ||
-                     ((originalTxCategoryInfo.name === "Purchase from Supplier (Cash)" || originalTxCategoryInfo.name === "Purchase from Supplier (Bank)") && displayedAmount < 0) ||
-                     (((originalTxCategoryInfo.name === "Loan Disbursed to Customer (Cash)") || originalTxCategoryInfo.name === "Loan Disbursed to Customer (Bank)") && displayedAmount > 0) || 
-                     (((originalTxCategoryInfo.name === "Loan Principal Repaid by Business (from Cash)") || originalTxCategoryInfo.name === "Loan Principal Repaid by Business (from Bank)") && displayedAmount < 0) ||
-                     (((originalTxCategoryInfo.name === "Loan Interest Paid by Business (from Cash)") || originalTxCategoryInfo.name === "Loan Interest Paid by Business (from Bank)") && displayedAmount < 0)
-            ) {
-                displayedAmount = -Math.abs(displayedAmount); 
-            }
-        } else if (originalTxCategoryInfo && originalTxCategoryInfo.affectsLedger === 'both_cash_in_bank_out') { 
-             displayedAmount = Math.abs(displayedAmount); 
-        } else if (originalTxCategoryInfo && originalTxCategoryInfo.affectsLedger === 'both_cash_out_bank_in') { 
-             displayedAmount = Math.abs(displayedAmount); 
-        }
+        const ledgerAmount = parseFloat(tx.amount);
         
         row.innerHTML = `
         <td>${tx.id}</td><td>${displayName}</td>
-        <td class="${displayedAmount >= 0 ? "positive" : "negative"}">₹${displayedAmount.toFixed(2)}</td> 
+        <td class="${ledgerAmount >= 0 ? "positive" : "negative"}">₹${ledgerAmount.toFixed(2)}</td> 
         <td>${tx.description || "-"}</td><td>${tx.category || "-"}</td>
         <td>${new Date(tx.date).toLocaleDateString()}</td>
         <td>
@@ -871,8 +944,6 @@ function displayTransactions(transactionsToDisplay) {
         </td>`;
     });
 }
-
-// --- START LEDGER LOGIC ---
 function showLedger(type) {
     document.getElementById("cashLedgerContent").style.display = "none";
     document.getElementById("bankLedgerContent").style.display = "none";
@@ -1216,8 +1287,6 @@ async function loadBankLedger(date = null) {
             tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Error: ${error.message}</td></tr>`;
     }
 }
-// --- END LEDGER LOGIC ---
-
 function printLedger(tableId, ledgerTitle) {
     const ledgerTable = document.getElementById(tableId)?.cloneNode(true);
     if (!ledgerTable) {
@@ -1236,7 +1305,6 @@ function printLedger(tableId, ledgerTitle) {
     printWindow.document.close();
 }
 
-// --- USER MANAGEMENT ---
 async function handleUserSubmit(e) {
     e.preventDefault();
     const data = {
@@ -1261,11 +1329,12 @@ async function handleUserSubmit(e) {
         const endpoint = editingUserId
             ? `${API}/users/${editingUserId}`
             : `${API}/users`;
-        const res = await fetch(endpoint, {
+        const res = await apiFetch(endpoint, {
             method,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(data),
         });
+        if(!res) return;
         const result = await res.json();
         if (!res.ok)
             throw new Error(
@@ -1284,7 +1353,7 @@ async function handleUserSubmit(e) {
             document.getElementById("businessFinanceSection")?.style.display ===
                 'block'
         ) {
-            loadCustomerSummaries();
+            loadCustomerSummaries(); // Reload summaries after user add/edit
         }
     } catch (error) {
         console.error("Error submitting customer form:", error);
@@ -1335,7 +1404,8 @@ async function deleteUser(id) {
     )
         return;
     try {
-        const res = await fetch(`${API}/users/${id}`, { method: "DELETE" });
+        const res = await apiFetch(`${API}/users/${id}`, { method: "DELETE" });
+        if(!res) return;
         const result = await res.json();
         if (!res.ok)
             throw new Error(result.error || `Failed: ${res.statusText}`);
@@ -1363,2759 +1433,6 @@ async function deleteUser(id) {
         alert(error.message);
     }
 }
-
-// --- GENERAL TRANSACTION MODAL ---
-function toggleTxPartyDropdowns() {
-    const userDropdown = document.getElementById("transaction_user_id");
-    const lenderDropdown = document.getElementById("transaction_lender_id");
-    const agreementDropdown = document.getElementById(
-        "transaction_agreement_id",
-    );
-    const forCustomerRadio = document.getElementById("txPartyTypeCustomer");
-
-    if (
-        !userDropdown ||
-        !lenderDropdown ||
-        !agreementDropdown ||
-        !forCustomerRadio
-    ) {
-        console.error(
-            "One or more party type dropdowns/radios are missing in transactionModal!",
-        );
-        return;
-    }
-
-    if (forCustomerRadio.checked) {
-        userDropdown.parentElement.style.display = "block";
-        lenderDropdown.parentElement.style.display = "none";
-        lenderDropdown.value = "";
-        agreementDropdown.parentElement.style.display = "none";
-        agreementDropdown.value = "";
-    } else {
-        userDropdown.parentElement.style.display = "none";
-        userDropdown.value = "";
-        lenderDropdown.parentElement.style.display = "block";
-        agreementDropdown.parentElement.style.display = "block";
-    }
-}
-
-
-async function openTransactionModal(
-    tx = null,
-    preselectUserId = null,
-    isBusinessExternal = false,
-    preselectLenderId = null,
-    preselectAgreementId = null,
-) {
-    console.log("openTransactionModal called with tx:", tx, "preselectUserId:", preselectUserId, "isBusinessExternal:", isBusinessExternal, "preselectLenderId:", preselectLenderId, "preselectAgreementId:", preselectAgreementId);
-    const modal = document.getElementById("transactionModal");
-    const form = document.getElementById("transactionForm");
-    const modalTitleElement = document.getElementById("transactionModalTitle");
-    const userDropdown = document.getElementById("transaction_user_id");
-    const lenderDropdown = document.getElementById("transaction_lender_id");
-    const agreementDropdown = document.getElementById(
-        "transaction_agreement_id",
-    );
-    const amountField = document.getElementById("amount");
-    let categoryDropdown = document.getElementById("category"); // Keep as let for reassignment
-    const descriptionField = document.getElementById("description");
-    const dateField = document.getElementById("date");
-    const lineItemsSection = document.getElementById(
-        "transactionLineItemsSection",
-    );
-    const lineItemsTableBody = document.getElementById("txLineItemsTableBody");
-    const forCustomerRadio = document.getElementById("txPartyTypeCustomer");
-    const forLenderRadio = document.getElementById("txPartyTypeLender");
-    const paymentModeGroup = document.getElementById("paymentModeGroup");
-
-
-    if (
-        !modal || !form || !modalTitleElement || !userDropdown || !lenderDropdown || !agreementDropdown ||
-        !amountField || !categoryDropdown || !descriptionField || !dateField ||
-        !lineItemsSection || !lineItemsTableBody || !forCustomerRadio || !forLenderRadio || !paymentModeGroup
-    ) {
-        console.error("One or more elements in transactionModal are missing!"); alert("Error: Transaction modal components not found."); return;
-    }
-
-    form.reset();
-    if (lineItemsTableBody) lineItemsTableBody.innerHTML = "";
-    updateTxGrandTotal();
-
-    try { // Added try block
-        if(usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
-        if(externalEntitiesCache.length === 0 && !isLoadingLenders) await loadLenders();
-        if(businessAgreementsCache.length === 0 && !isLoadingBusinessAgreements) await loadBusinessExternalFinanceAgreements();
-        if(productsCache.length === 0 && !isLoadingProducts) await loadProducts();
-
-
-        await populateUserDropdown();
-        await populateLenderDropdownForTxModal();
-        await populateAgreementDropdownForTxModal();
-        populateTransactionCategoryDropdown(); 
-
-        const amountLabel = document.querySelector('label[for="amount"]');
-
-        // Detach existing listener before attaching a new one to prevent multiple executions
-        const newCategoryDropdown = categoryDropdown.cloneNode(true);
-        categoryDropdown.parentNode.replaceChild(newCategoryDropdown, categoryDropdown);
-        categoryDropdown = newCategoryDropdown; // Update reference
-        
-        categoryDropdown.onchange = () => { // Use the updated categoryDropdown reference
-            const selectedBaseCategoryName = categoryDropdown.value;
-            const baseCatInfo = baseTransactionCategories.find(c => c.name === selectedBaseCategoryName);
-            console.log("Base Category Changed. Info:", baseCatInfo);
-            
-            const isProductInvolved = baseCatInfo && (baseCatInfo.isProductSale || baseCatInfo.isProductPurchase);
-
-            if (lineItemsSection) {
-                lineItemsSection.style.display = isProductInvolved ? "block" : "none";
-                if ( isProductInvolved && lineItemsTableBody && lineItemsTableBody.rows.length === 0 ) {
-                    addTxLineItemRow();
-                }
-            }
-            
-            if (paymentModeGroup) {
-                paymentModeGroup.style.display = (baseCatInfo && baseCatInfo.needsPaymentMode) ? 'flex' : 'none'; 
-            }
-
-            if (amountLabel) {
-                amountLabel.textContent = (baseCatInfo && isProductInvolved) ? "Total Item Amount (₹):" : "Amount (₹):";
-            }
-            if (amountField){
-                amountField.readOnly = !!isProductInvolved; 
-                if(isProductInvolved) updateTxGrandTotal();
-            }
-
-            if(baseCatInfo && baseCatInfo.relevantTo) {
-                if(baseCatInfo.relevantTo === 'customer') {
-                    forCustomerRadio.checked = true;
-                } else if (baseCatInfo.relevantTo === 'lender') {
-                    forLenderRadio.checked = true;
-                }
-                toggleTxPartyDropdowns();
-            } else if (!editingTxnId && baseCatInfo) { 
-                forCustomerRadio.checked = true; 
-                toggleTxPartyDropdowns();
-            }
-            
-            if (baseCatInfo && baseCatInfo.needsPaymentMode) {
-                if (!tx || (tx && !document.querySelector('input[name="txPaymentMode"]:checked'))) { // Only default if not editing an already set mode
-                     document.getElementById("txPayModeCash").checked = true; 
-                }
-            } else if (baseCatInfo && !baseCatInfo.needsPaymentMode) {
-                const paymentRadios = document.getElementsByName("txPaymentMode");
-                paymentRadios.forEach(radio => radio.checked = false);
-            }
-        };
-
-
-        if (tx) { // Editing existing transaction
-            editingTxnId = tx.id;
-            // const user = usersDataCache.find(u => u.id === parseInt(tx.user_id)); // Already done in a previous step, ensure usersDataCache is loaded
-            modalTitleElement.textContent = `Edit Transaction ${tx.user_id ? `for ${(usersDataCache.find(u => u.id === parseInt(tx.user_id)))?.username || `Cust. ID ${tx.user_id}`}` : "(Business/External)"}`;
-
-
-            userDropdown.value = tx.user_id || "";
-            lenderDropdown.value = tx.lender_id || "";
-            agreementDropdown.value = tx.agreement_id || "";
-            amountField.value = tx.amount !== undefined ? Math.abs(tx.amount) : ""; 
-            descriptionField.value = tx.description || "";
-            dateField.value = tx.date ? tx.date.split("T")[0] : new Date().toISOString().split("T")[0];
-            
-            if(tx.lender_id) {
-                forLenderRadio.checked = true;
-            } else if (tx.user_id) { 
-                forCustomerRadio.checked = true;
-            } else { 
-                forCustomerRadio.checked = true; // Default if neither
-            }
-            toggleTxPartyDropdowns();
-
-            const originalFullCatFromDB = tx.category;
-            let baseNameToSelect = originalFullCatFromDB; 
-            let paymentModeToSelect = "On Credit"; 
-            let needsModeForEditDisplay = false;
-
-            for (const bc of baseTransactionCategories) {
-                if (bc.needsPaymentMode) {
-                    if (originalFullCatFromDB === bc.categoryPattern.replace("{PaymentMode}", "Cash") || 
-                        originalFullCatFromDB === bc.categoryPattern.replace("{PaymentModeDestination}", "(to Cash)") ||
-                        originalFullCatFromDB === bc.categoryPattern.replace("{PaymentModeSource}", "(from Cash)") ||
-                        originalFullCatFromDB === bc.categoryPattern.replace("{PaymentMode}", "Cash").replace("Refund via Cash", "Cash Refund") 
-                        ) { 
-                        baseNameToSelect = bc.name; paymentModeToSelect = "Cash"; needsModeForEditDisplay = true; break;
-                    }
-                    if (originalFullCatFromDB === bc.categoryPattern.replace("{PaymentMode}", "Bank") ||
-                        originalFullCatFromDB === bc.categoryPattern.replace("{PaymentModeDestination}", "(to Bank)") ||
-                        originalFullCatFromDB === bc.categoryPattern.replace("{PaymentModeSource}", "(from Bank)") ||
-                        originalFullCatFromDB === bc.categoryPattern.replace("{PaymentMode}", "Bank").replace("Refund via Bank", "Bank Refund")
-                        ) { 
-                        baseNameToSelect = bc.name; paymentModeToSelect = "Bank"; needsModeForEditDisplay = true; break;
-                    }
-                    if (originalFullCatFromDB === `${bc.name} (On Credit)` || 
-                        (originalFullCatFromDB === "Sale to Customer (On Credit)" && bc.name === "Sale to Customer") ||
-                        (originalFullCatFromDB === "Purchase from Supplier (On Credit)" && bc.name === "Purchase from Supplier") ||
-                        (originalFullCatFromDB === "Product Return from Customer (Credit Note)" && bc.name === "Product Return from Customer (Refund)") ||
-                        (originalFullCatFromDB === "Product Return to Supplier (Credit Received)" && bc.name === "Product Return to Supplier (Refund Recvd)")
-                        ) {
-                        baseNameToSelect = bc.name; paymentModeToSelect = "On Credit"; needsModeForEditDisplay = true; break;
-                    }
-                } else if (originalFullCatFromDB === bc.categoryPattern) { 
-                    baseNameToSelect = bc.name;
-                    paymentModeToSelect = null; 
-                    needsModeForEditDisplay = false;
-                    break;
-                }
-            }
-            
-            categoryDropdown.value = baseNameToSelect; // Use updated reference
-            
-            if(needsModeForEditDisplay){
-                paymentModeGroup.style.display = 'flex';
-                if (paymentModeToSelect === "Cash") document.getElementById("txPayModeCash").checked = true;
-                else if (paymentModeToSelect === "Bank") document.getElementById("txPayModeBank").checked = true;
-                else if (paymentModeToSelect === "On Credit") document.getElementById("txPayModeCredit").checked = true;
-                else document.getElementById("txPayModeCash").checked = true; 
-            } else {
-                paymentModeGroup.style.display = 'none';
-            }
-            
-            categoryDropdown.dispatchEvent(new Event('change')); // Use updated reference
-
-        } else { // New transaction
-            editingTxnId = null;
-            dateField.value = new Date().toISOString().split("T")[0];
-            amountField.value = "";
-            categoryDropdown.value = ""; // Use updated reference
-            descriptionField.value = "";
-            
-            // Initial state for payment mode
-            const selectedBaseCategoryName = categoryDropdown.value; // Use updated reference
-            const baseCatInfo = baseTransactionCategories.find(c => c.name === selectedBaseCategoryName);
-            if (baseCatInfo && baseCatInfo.needsPaymentMode) {
-                paymentModeGroup.style.display = 'flex';
-                document.getElementById("txPayModeCash").checked = true;
-            } else {
-                paymentModeGroup.style.display = 'none';
-                 // If not needed, ensure no radio is checked misleadingly, though JS defaults one if group is shown
-                const paymentRadios = document.getElementsByName("txPaymentMode");
-                let oneChecked = false;
-                paymentRadios.forEach(radio => {if (radio.checked) oneChecked = true;});
-                if (!oneChecked && paymentModeGroup.style.display === 'flex') document.getElementById("txPayModeCash").checked = true;
-            }
-
-
-            if (isBusinessExternal) {
-                modalTitleElement.textContent = "New Business/External Transaction";
-                forLenderRadio.checked = true;
-                if (preselectLenderId) lenderDropdown.value = preselectLenderId;
-                if (preselectAgreementId)
-                    agreementDropdown.value = preselectAgreementId;
-            } else if (preselectUserId) {
-                // const user = usersDataCache.find(u => u.id === preselectUserId); // Done before
-                modalTitleElement.textContent = `New Transaction for ${(usersDataCache.find(u => u.id === preselectUserId))?.username || `Customer ID ${preselectUserId}`}`;
-                forCustomerRadio.checked = true;
-                userDropdown.value = preselectUserId;
-            } else {
-                modalTitleElement.textContent = "New Transaction";
-                forCustomerRadio.checked = true;
-            }
-            toggleTxPartyDropdowns();
-            categoryDropdown.dispatchEvent(new Event('change')); // Use updated reference
-        }
-    } catch (error) { // Catch block for the setup try
-        console.error("Error during openTransactionModal setup:", error);
-        alert("An error occurred while preparing the transaction form: " + error.message);
-        return; 
-    }
-    modal.style.display = "block";
-}
-
-async function handleTransactionSubmit(e) {
-    e.preventDefault();
-    console.log("--- handleTransactionSubmit: START ---");
-
-    const userIdInput = document.getElementById("transaction_user_id").value;
-    const lenderIdInput = document.getElementById("transaction_lender_id").value;
-    const agreementIdInput = document.getElementById("transaction_agreement_id").value;
-    const isForCustomer = document.getElementById("txPartyTypeCustomer").checked;
-
-    const userId = (isForCustomer && userIdInput && userIdInput !== "") ? parseInt(userIdInput) : null;
-    const lenderId = (!isForCustomer && lenderIdInput && lenderIdInput !== "") ? parseInt(lenderIdInput) : null;
-    const agreementId = (!isForCustomer && agreementIdInput && agreementIdInput !== "" && document.getElementById("transaction_agreement_id").style.display !== 'none') ? parseInt(agreementIdInput) : null;
-
-    const baseCategoryName = document.getElementById("category").value;
-    const baseCatInfo = baseTransactionCategories.find(cat => cat.name === baseCategoryName);
-
-    if (!baseCatInfo) {
-        alert("Invalid base category selected.");
-        console.error("--- handleTransactionSubmit: END - Invalid base category ---");
-        return;
-    }
-    console.log("Base Category Name:", baseCategoryName, "Base Category Info:", baseCatInfo);
-
-    let paymentMode = null;
-    const paymentModeGroup = document.getElementById("paymentModeGroup");
-    if (baseCatInfo.needsPaymentMode && paymentModeGroup.style.display !== 'none') {
-        const paymentModeRadios = document.getElementsByName("txPaymentMode");
-        for (const radio of paymentModeRadios) {
-            if (radio.checked) {
-                paymentMode = radio.value; // "Cash", "Bank", or "On Credit"
-                break;
-            }
-        }
-        if (!paymentMode) {
-            alert("Please select a payment mode for this category.");
-            console.error("--- handleTransactionSubmit: END - Payment mode required but not selected ---");
-            return;
-        }
-    } else if (!baseCatInfo.needsPaymentMode) {
-         // If payment mode is not needed (e.g. "Bank Charges", "Cash Deposited to Bank"),
-        // or if it's an "On Credit" type of transaction.
-        // For "On Credit" that comes from a "needsPaymentMode=true" base category, paymentMode will be "On Credit".
-        // For categories where needsPaymentMode is false, we'll use the base category pattern directly.
-        paymentMode = baseCatInfo.fixedPaymentMode || "none"; 
-    }
-    console.log("Selected Payment Mode:", paymentMode);
-    
-    const categoryDetails = getFullCategoryDetails(baseCategoryName, paymentMode);
-    const fullCategoryName = categoryDetails.fullCategoryName;
-    console.log("Full Category Details from helper:", categoryDetails);
-    console.log("Constructed Full Category Name:", fullCategoryName);
-
-    if (!fullCategoryName || (fullCategoryName === baseCategoryName && baseCatInfo.needsPaymentMode && paymentMode !== "On Credit" && !baseCatInfo.fixedPaymentMode)) {
-        alert(`Could not determine full category for '${baseCategoryName}' with payment mode '${paymentMode}'. Please check category definitions.`);
-        console.error("--- handleTransactionSubmit: END - Could not determine full category ---");
-        return;
-    }
-
-
-    let totalAmountInputValue = parseFloat(document.getElementById("amount").value);
-    const isProductInvolved = baseCatInfo.isProductSale || baseCatInfo.isProductPurchase;
-
-    const lineItems = [];
-    if (isProductInvolved) {
-        document.querySelectorAll("#txLineItemsTableBody tr").forEach((row) => {
-            const productId = row.querySelector(".tx-line-product").value;
-            const quantity = parseFloat(row.querySelector(".tx-line-qty").value);
-            const unitPrice = parseFloat(row.querySelector(".tx-line-price").value);
-            if (productId && quantity > 0 && unitPrice >= 0) {
-                lineItems.push({ product_id: productId, quantity: quantity, unit_price: unitPrice });
-            }
-        });
-        if (lineItems.length === 0 && (baseCatInfo.isProductSale || baseCatInfo.isProductPurchase)) {
-            alert("For product sales/purchases, please add at least one valid line item.");
-            console.error("--- handleTransactionSubmit: END - Missing line items for product transaction ---");
-            return;
-        }
-        totalAmountInputValue = parseFloat(document.getElementById("txLineItemsGrandTotal").textContent) || 0;
-    }
-    console.log("Total Amount Input Value:", totalAmountInputValue);
-
-    const transactionDate = document.getElementById("date").value;
-    const transactionDescription = document.getElementById("description").value.trim();
-
-    if ( (baseCategoryName !== "Stock Adjustment (Increase)" && baseCategoryName !== "Stock Adjustment (Decrease)") && 
-         (isNaN(totalAmountInputValue) || totalAmountInputValue <= 0) && 
-         !isProductInvolved 
-       ) {
-        alert("Amount must be a positive number (unless it's a pure stock quantity adjustment or calculated from line items).");
-        console.error("--- handleTransactionSubmit: END - Invalid amount ---");
-        return;
-    }
-    if (!baseCategoryName) { alert("Please select a base category."); console.error("--- handleTransactionSubmit: END - No base category ---"); return; }
-    if (!transactionDate) { alert("Date is required."); console.error("--- handleTransactionSubmit: END - No date ---"); return; }
-
-    let finalAmount = totalAmountInputValue;
-
-    if (userId && categoryDetails.relevantTo === 'customer') {
-        finalAmount = Math.abs(finalAmount) * (categoryDetails.defaultSignForParty || 1);
-    } else if (lenderId && categoryDetails.relevantTo === 'lender') {
-        finalAmount = Math.abs(finalAmount) * (categoryDetails.defaultSignForParty || 1);
-    } else if (categoryDetails.relevantTo === 'none') { 
-        const originalDetailedCategory = transactionCategories.find(tc => tc.name === fullCategoryName);
-        if (originalDetailedCategory) {
-            if (originalDetailedCategory.type && originalDetailedCategory.type.includes("expense")) finalAmount = -Math.abs(finalAmount);
-            else if (originalDetailedCategory.type && originalDetailedCategory.type.includes("income")) finalAmount = Math.abs(finalAmount);
-            
-            if (fullCategoryName === "Cash Deposited to Bank") finalAmount = -Math.abs(finalAmount); 
-            if (fullCategoryName === "Cash Withdrawn from Bank") finalAmount = Math.abs(finalAmount); 
-        } else { 
-             if (categoryDetails.type === "expense") finalAmount = -Math.abs(finalAmount);
-             else if (categoryDetails.type === "income") finalAmount = Math.abs(finalAmount);
-        }
-    }
-    
-    if (baseCategoryName.includes("Stock Adjustment")) {
-        if (isNaN(totalAmountInputValue) || (totalAmountInputValue === 0 && lineItems.length > 0) ) { 
-             finalAmount = 0; 
-        } else if (isNaN(totalAmountInputValue)) {
-             finalAmount = 0;
-        }
-        else finalAmount = totalAmountInputValue; 
-    }
-    console.log("Final Amount to be saved:", finalAmount);
-
-
-    const txData = {
-        user_id: userId,
-        lender_id: lenderId,
-        agreement_id: agreementId,
-        amount: finalAmount,
-        description: transactionDescription,
-        category: fullCategoryName, 
-        date: transactionDate,
-        line_items: (isProductInvolved && lineItems.length > 0) ? lineItems : undefined,
-    };
-    console.log("Transaction Data to send to backend:", JSON.stringify(txData, null, 2));
-    
-    try {
-        const method = editingTxnId ? "PUT" : "POST";
-        const endpoint = method === "PUT" ? `${API}/transactions/${editingTxnId}` : `${API}/transactions`;
-        console.log(`Sending ${method} request to ${endpoint}`);
-
-        const res = await fetch(endpoint, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(txData),
-        });
-        console.log("Backend Response Status:", res.status);
-        const result = await res.json();
-        console.log("Backend Response Body:", result);
-
-        if (!res.ok) {
-            throw new Error(result.error || `Operation failed: ${res.statusText} - ${result.details || ""}`);
-        }
-        
-        alert(result.message || (editingTxnId ? "Transaction updated" : "Transaction added"));
-        if(txData.line_items && txData.line_items.length > 0) { 
-            await loadProducts(); 
-        }
-
-        editingTxnId = null;
-        closeTransactionModal();
-        await loadAllTransactions(); 
-        await loadUsers(); 
-
-        const cashLedgerActive = document.getElementById("cashLedgerContent")?.style.display !== 'none';
-        const bankLedgerActive = document.getElementById("bankLedgerContent")?.style.display !== 'none';
-        if (cashLedgerActive) loadCashLedger();
-        if (bankLedgerActive) loadBankLedger();
-
-        if (document.getElementById("customerManagementSection")?.style.display === 'block') loadCustomerSummaries();
-        if (document.getElementById("supplierManagementSection")?.style.display === 'block') loadSupplierSummaries(); 
-        if (document.getElementById("businessFinanceSection")?.style.display === 'block') loadBusinessExternalFinanceAgreements();
-        if (document.getElementById("inventoryManagementSection")?.style.display === 'block') displayProducts(); 
-        updateDashboardCards();
-        console.log("--- handleTransactionSubmit: SUCCESS ---");
-
-    } catch (error) {
-        console.error("Error submitting transaction form:", error);
-        alert("Operation failed: " + error.message);
-        console.error("--- handleTransactionSubmit: END - CATCH ERROR ---");
-    }
-}
-
-
-function closeTransactionModal() {
-    const modal = document.getElementById("transactionModal");
-    if (modal) {
-        modal.style.display = "none";
-    }
-    editingTxnId = null;
-    const form = document.getElementById("transactionForm");
-    if (form) {
-        form.reset();
-    }
-
-    const forCustomerRadio = document.getElementById("txPartyTypeCustomer");
-    if(forCustomerRadio) forCustomerRadio.checked = true; 
-    toggleTxPartyDropdowns(); 
-
-    const lineItemsSection = document.getElementById("transactionLineItemsSection");
-    if(lineItemsSection) lineItemsSection.style.display = "none";
-    const lineItemsTableBody = document.getElementById("txLineItemsTableBody");
-    if(lineItemsTableBody) lineItemsTableBody.innerHTML = "";
-    const grandTotalSpan = document.getElementById("txLineItemsGrandTotal");
-    if(grandTotalSpan) grandTotalSpan.textContent = "0.00";
-    const amountInput = document.getElementById("amount");
-    if(amountInput) amountInput.readOnly = false;
-
-    const paymentModeGroup = document.getElementById("paymentModeGroup");
-    if(paymentModeGroup) paymentModeGroup.style.display = 'none';
-    document.getElementById("txPayModeCash").checked = true; 
-
-    const amountLabel = document.querySelector('label[for="amount"]');
-    if(amountLabel) amountLabel.textContent = "Amount (₹):";
-}
-
-
-function addTxLineItemRow(itemData = null) {
-    const tableBody = document.getElementById("txLineItemsTableBody");
-    if (!tableBody || !productsCache) return;
-    const newRow = tableBody.insertRow();
-
-    const productCell = newRow.insertCell();
-    const productSelect = document.createElement("select");
-    productSelect.className = "form-control tx-line-product";
-    productSelect.innerHTML = '<option value="">Select Product...</option>';
-    productsCache.forEach((p) => {
-        const option = document.createElement("option");
-        option.value = p.id;
-        option.textContent = `${p.product_name} (Stock: ${p.current_stock})`;
-        option.dataset.price = p.sale_price;
-        option.dataset.stock = p.current_stock;
-        productSelect.appendChild(option);
-    });
-    productSelect.addEventListener("change", (e) => {
-        const selectedOption = e.target.options[e.target.selectedIndex];
-        const price = selectedOption.dataset.price;
-        const row = e.target.closest("tr");
-        if (row && price) {
-            row.querySelector(".tx-line-price").value =
-                parseFloat(price).toFixed(2);
-            updateTxLineTotal(row);
-        }
-    });
-    productCell.appendChild(productSelect);
-
-    const qtyCell = newRow.insertCell();
-    const qtyInput = document.createElement("input");
-    qtyInput.type = "number";
-    qtyInput.className = "form-control tx-line-qty";
-    qtyInput.value = itemData ? itemData.quantity : 1;
-    qtyInput.min = 1;
-    qtyInput.style.width="70px";
-    qtyInput.addEventListener("input", (e) => {
-        updateTxLineTotal(e.target.closest("tr"));
-    });
-    qtyCell.appendChild(qtyInput);
-
-    const priceCell = newRow.insertCell();
-    const priceInput = document.createElement("input");
-    priceInput.type = "number";
-    priceInput.step = "0.01";
-    priceInput.className = "form-control tx-line-price";
-    priceInput.value = itemData
-        ? parseFloat(itemData.unit_price).toFixed(2)
-        : "0.00";
-    priceInput.style.width="100px";
-    priceInput.addEventListener("input", (e) =>
-        updateTxLineTotal(e.target.closest("tr")),
-    );
-    priceCell.appendChild(priceInput);
-
-    const totalCell = newRow.insertCell();
-    totalCell.className = "tx-line-item-total";
-    totalCell.textContent = "0.00";
-
-    const actionCell = newRow.insertCell();
-    const removeButton = document.createElement("button");
-    removeButton.type = "button";
-    removeButton.className = "btn btn-danger btn-sm";
-    removeButton.innerHTML = "×";
-    removeButton.onclick = () => {
-        newRow.remove();
-        updateTxGrandTotal();
-    };
-    actionCell.appendChild(removeButton);
-
-    if(itemData && itemData.product_id) {
-        productSelect.value = itemData.product_id;
-        const event = new Event('change');
-        productSelect.dispatchEvent(event); 
-    } else {
-        updateTxLineTotal(newRow); 
-    }
-}
-
-function updateTxLineTotal(row) {
-    if(!row) return;
-    const qty = parseFloat(row.querySelector(".tx-line-qty").value) || 0;
-    const price = parseFloat(row.querySelector(".tx-line-price").value) || 0;
-    const lineTotal = qty * price;
-    row.querySelector(".tx-line-item-total").textContent = lineTotal.toFixed(2);
-    updateTxGrandTotal();
-}
-
-function updateTxGrandTotal() {
-    let grandTotal = 0;
-    document.querySelectorAll("#txLineItemsTableBody tr").forEach((row) => {
-        grandTotal +=
-            parseFloat(row.querySelector(".tx-line-item-total").textContent) ||
-            0;
-    });
-    const grandTotalSpan = document.getElementById("txLineItemsGrandTotal");
-    if(grandTotalSpan) grandTotalSpan.textContent = grandTotal.toFixed(2);
-
-    const amountInput = document.getElementById("amount");
-    if(amountInput && amountInput.readOnly) {
-        amountInput.value = grandTotal.toFixed(2);
-    }
-}
-
-async function deleteTransaction(id) {
-    if (!confirm("Are you sure?")) return;
-    try {
-        const res = await fetch(`${API}/transactions/${id}`, {
-            method: "DELETE",
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(result.error || `Failed: ${res.statusText}`);
-        alert(result.message || "Transaction deleted");
-
-        await loadAllTransactions();
-        await loadUsers();
-        await loadProducts();
-        const cashLedgerActive =
-            document.getElementById("cashLedgerContent")?.style.display !==
-            'none';
-        const bankLedgerActive =
-            document.getElementById("bankLedgerContent")?.style.display !==
-            'none';
-        if (cashLedgerActive) loadCashLedger();
-        if (bankLedgerActive) loadBankLedger();
-        if (
-            document.getElementById("customerManagementSection")?.style
-                .display === 'block'
-        )
-            loadCustomerSummaries();
-        if (
-            document.getElementById("supplierManagementSection")?.style
-                .display === 'block'
-        )
-            loadSupplierSummaries();
-        if (
-            document.getElementById("businessFinanceSection")?.style.display ===
-            'block'
-        )
-            loadBusinessExternalFinanceAgreements();
-        if (document.getElementById("inventoryManagementSection")?.style.display === 'block') {
-             displayProducts(); 
-        }
-        updateDashboardCards(); 
-    } catch (error) {
-        console.error("Delete transaction error:", error);
-        alert(error.message);
-    }
-}
-// --- START OF SCRIPT.JS CHUNK 5 (REVISED) ---
-// --- LENDER/EXTERNAL ENTITY & BUSINESS AGREEMENT FUNCTIONS ---
-function toggleInitialPayableField(){
-    const entityTypeDropdown = document.getElementById("lenderEntityType");
-    const initialPayableGroup = document.getElementById("initialPayableGroup");
-    if (entityTypeDropdown && initialPayableGroup) {
-        if(entityTypeDropdown.value === 'Supplier') {
-            initialPayableGroup.style.display = "block";
-        } else {
-            initialPayableGroup.style.display = "none";
-            const initialPayableInput = document.getElementById("lenderInitialPayable");
-            if (initialPayableInput) initialPayableInput.value = 0;
-        }
-    }
-}
-
-
-function openLenderModal(lender = null, entityType = "General") {
-    const modal = document.getElementById("lenderModal");
-    const form = document.getElementById("lenderForm");
-    const title = document.getElementById("lenderModalTitle");
-    const typeDropdown = document.getElementById("lenderEntityType");
-    const initialPayableInput = document.getElementById("lenderInitialPayable");
-    const lenderIdInput = document.getElementById("lenderId");
-
-    if (!modal || !form || !title || !typeDropdown || !initialPayableInput || !lenderIdInput) {
-        console.error("One or more elements in lenderModal are missing from the DOM! Check IDs: lenderModal, lenderForm, lenderModalTitle, lenderEntityType, lenderInitialPayable, lenderId");
-        alert("Error: Lender modal components not found. Please check console.");
-        return;
-    }
-
-    form.reset();
-    editingLenderId = null;
-    lenderIdInput.value = "";
-    typeDropdown.value = entityType;
-    initialPayableInput.value = "0.00";
-
-    if (lender) {
-        editingLenderId = lender.id;
-        title.textContent = `Edit External Entity: ${lender.lender_name}`;
-        lenderIdInput.value = lender.id;
-        document.getElementById("lenderName").value = lender.lender_name || "";
-        typeDropdown.value = lender.entity_type || "General";
-        initialPayableInput.value = (lender.entity_type === 'Supplier' && lender.initial_payable_balance !== undefined) ? parseFloat(lender.initial_payable_balance).toFixed(2) : "0.00";
-        document.getElementById("lenderContactPerson").value =
-            lender.contact_person || "";
-        document.getElementById("lenderPhone").value = lender.phone || "";
-        document.getElementById("lenderEmail").value = lender.email || "";
-        document.getElementById("lenderNotes").value = lender.notes || "";
-    } else {
-        title.textContent = `Add New ${entityType === 'Financial' ? 'Financial Entity' : entityType}`;
-    }
-    toggleInitialPayableField();
-    modal.style.display = "block";
-}
-function closeLenderModal() {
-    const modal = document.getElementById("lenderModal");
-    if (modal) {
-        modal.style.display = "none";
-    }
-    editingLenderId = null;
-    const form = document.getElementById("lenderForm");
-    if(form){form.reset();}
-}
-async function handleLenderSubmit(e) {
-    e.preventDefault();
-    const entityType = document.getElementById("lenderEntityType").value;
-    const initialPayable = (entityType === 'Supplier') ? (parseFloat(document.getElementById("lenderInitialPayable").value) || 0) : 0;
-
-    const data = {
-        lender_name: document.getElementById("lenderName").value.trim(),
-        entity_type: entityType,
-        contact_person: document
-            .getElementById("lenderContactPerson")
-            .value.trim(),
-        phone: document.getElementById("lenderPhone").value.trim(),
-        email: document.getElementById("lenderEmail").value.trim(),
-        notes: document.getElementById("lenderNotes").value.trim(),
-        initial_payable_balance: initialPayable
-    };
-    if (!data.lender_name) {
-        alert("External Entity Name is required.");
-        return;
-    }
-    const method = editingLenderId ? "PUT" : "POST";
-    const endpoint = editingLenderId
-        ? `${API}/external-entities/${editingLenderId}`
-        : `${API}/external-entities`;
-    try {
-        const res = await fetch(endpoint, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(data),
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(
-                result.error || `Operation failed: ${res.statusText}`,
-            );
-        alert(
-            result.message ||
-                (editingLenderId
-                    ? "External entity updated"
-                    : "External entity created"),
-        );
-        closeLenderModal();
-        await loadLenders(null, true); // Force reload of main externalEntitiesCache
-        if (
-            document.getElementById("supplierManagementSection")?.style
-                .display === 'block'
-        ) {
-            loadSupplierSummaries(); 
-        }
-        if (
-            document.getElementById("businessFinanceSection")?.style.display ===
-            'block'
-        ) {
-            populateAgreementEntityDropdown();
-        }
-        const linkSupplierDropdown = document.getElementById("linkSupplierId");
-        if (linkSupplierDropdown) populateSuppliersForProductLinkModal();
-
-    } catch (error) {
-        console.error("Error saving external entity:", error);
-        alert("Error: " + error.message);
-    }
-}
-
-async function loadLenders(entityTypeFilter = null, forceReloadAllCache = false) {
-    if(!entityTypeFilter && !isLoadingLenders && externalEntitiesCache.length > 0 && !forceReloadAllCache) return externalEntitiesCache;
-
-    let specificLoad = !!entityTypeFilter; 
-    if(!specificLoad || forceReloadAllCache) isLoadingLenders = true; 
-
-    const tableBody = document.getElementById("lendersTableBody"); 
-
-    if (tableBody && (!specificLoad || forceReloadAllCache) && document.getElementById("businessFinanceSection")?.style.display === 'block')
-        tableBody.innerHTML =
-            '<tr><td colspan="7" style="text-align:center;">Loading external entities...</td></tr>';
-
-    try {
-        const fetchUrl = entityTypeFilter
-            ? `${API}/external-entities?type=${entityTypeFilter}`
-            : `${API}/external-entities`;
-        const res = await fetch(fetchUrl);
-        if (!res.ok)
-            throw new Error(
-                `Failed to fetch external entities: ${res.statusText} ${await res.text()}`,
-            );
-        const data = await res.json();
-
-        const entitiesToDisplay = Array.isArray(data) ? data : [];
-        
-        if(!specificLoad || forceReloadAllCache) { 
-            externalEntitiesCache = entitiesToDisplay; 
-        }
-
-        if (tableBody && (!specificLoad || forceReloadAllCache) && document.getElementById("businessFinanceSection")?.style.display === 'block') {
-            tableBody.innerHTML = "";
-            const generalLenders = externalEntitiesCache.filter(e => e.entity_type !== 'Supplier');
-            if (generalLenders.length === 0) {
-                tableBody.innerHTML =
-                    '<tr><td colspan="7" style="text-align:center;">No general external entities found.</td></tr>';
-            } else {
-                generalLenders.forEach((entity) => {
-                    const row = tableBody.insertRow();
-                    row.insertCell().textContent = entity.id;
-                    row.insertCell().textContent = entity.lender_name;
-                    row.insertCell().textContent =
-                        entity.entity_type || 'General';
-                    row.insertCell().textContent = entity.contact_person || "-";
-                    row.insertCell().textContent = entity.phone || "-";
-                    row.insertCell().textContent = entity.notes || "-";
-                    const actionsCell = row.insertCell();
-                    actionsCell.innerHTML = `<button class='btn btn-primary btn-sm' onclick='openLenderModal(${JSON.stringify(entity)}, "${entity.entity_type}")'><i class="fas fa-edit"></i></button> <button class='btn btn-danger btn-sm' onclick='deleteLender(${entity.id})'><i class="fas fa-trash"></i></button>`;
-                });
-            }
-        }
-        if (!specificLoad || forceReloadAllCache) updateDashboardCards(); 
-        return entitiesToDisplay; 
-    } catch (error) {
-        console.error("Error loading external entities:", error);
-        if(tableBody && (!specificLoad || forceReloadAllCache))
-            tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Error: ${error.message}</td></tr>`;
-        if(!specificLoad || forceReloadAllCache) externalEntitiesCache = [];
-        return [];
-    } finally {
-        if(!specificLoad || forceReloadAllCache) isLoadingLenders = false;
-    }
-}
-
-async function deleteLender(id) {
-    if (
-        !confirm(
-            "Are you sure you want to delete this external entity? This may affect product-supplier links and business agreements.",
-        )
-    )
-        return;
-    try {
-        const res = await fetch(`${API}/external-entities/${id}`, {
-            method: "DELETE",
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(
-                result.error || `Failed to delete: ${res.statusText}`,
-            );
-        alert(result.message || "External entity deleted");
-        await loadLenders(null, true); 
-        if (
-            document.getElementById("supplierManagementSection")?.style
-                .display === 'block'
-        ) {
-            loadSupplierSummaries(); 
-        }
-        if (
-            document.getElementById("businessFinanceSection")?.style.display ===
-            'block'
-        ) {
-            populateAgreementEntityDropdown(); 
-            loadBusinessExternalFinanceAgreements();
-        }
-        const linkSupplierDropdown = document.getElementById("linkSupplierId");
-        if(linkSupplierDropdown && document.getElementById("productSupplierLinkModal").style.display === 'block') {
-             populateSuppliersForProductLinkModal(); 
-        }
-        if(document.getElementById("inventoryManagementSection")?.style.display === 'block') {
-            loadProducts(); 
-        }
-
-    } catch (error) {
-        console.error("Error deleting external entity:", error);
-        alert("Error: " + error.message);
-    }
-}
-
-async function loadCustomerSummaries() {
-    const customerTableBody = document.getElementById("customerTableBody");
-    if(!customerTableBody) return;
-    customerTableBody.innerHTML =
-        '<tr><td colspan="8" style="text-align:center;">Loading customer data...</td></tr>';
-    try {
-        if (usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions)
-            await loadAllTransactions();
-        customerTableBody.innerHTML = "";
-        if (!Array.isArray(usersDataCache) || usersDataCache.length === 0) {
-            customerTableBody.innerHTML =
-                '<tr><td colspan="8" style="text-align:center;">No customers found.</td></tr>';
-            return;
-        }
-        usersDataCache.forEach((user) => {
-            let receivable = parseFloat(user.initial_balance) || 0;
-            let loanOutstanding = 0;
-            let chitNetPosition = 0;
-            allTransactionsCache
-                .filter((tx) => tx.user_id === user.id)
-                .forEach((tx) => {
-                    const categoryInfo = transactionCategories.find( // Use detailed for logic
-                        (cat) => cat.name === tx.category,
-                    );
-                    if (categoryInfo) {
-                        const amount = parseFloat(tx.amount);
-
-                        if (categoryInfo.group === "customer_revenue") receivable += amount; 
-                        else if (categoryInfo.group === "customer_payment") receivable += amount; 
-                        else if (categoryInfo.name === "Product Return from Customer (Credit Note)") receivable += amount; 
-                        else if (categoryInfo.name.startsWith("Product Return from Customer (Refund via")) receivable -= amount; 
-                        
-                        else if (categoryInfo.group === "customer_loan_out") loanOutstanding += amount; 
-                        else if (categoryInfo.group === "customer_loan_in") loanOutstanding += amount; 
-                        
-                        else if (categoryInfo.group === "customer_chit_in") chitNetPosition -= amount; 
-                        else if (categoryInfo.group === "customer_chit_out") chitNetPosition -= amount; 
-                    }
-                });
-            const row = customerTableBody.insertRow();
-            row.insertCell().textContent = user.id;
-            row.insertCell().textContent = user.username;
-            row.insertCell().textContent = (
-                parseFloat(user.initial_balance) || 0
-            ).toFixed(2);
-            const receivableCell = row.insertCell();
-            receivableCell.textContent = receivable.toFixed(2);
-            receivableCell.className =
-                receivable > 0
-                    ? "negative-balance" 
-                    : receivable < 0
-                      ? "positive-balance" 
-                      : "";
-            const loanCell = row.insertCell();
-            loanCell.textContent = loanOutstanding.toFixed(2);
-            loanCell.className = loanOutstanding > 0 ? "negative-balance" : ""; 
-            const chitCell = row.insertCell();
-            chitCell.textContent = chitNetPosition.toFixed(2);
-            chitCell.className =
-                chitNetPosition >= 0 ? "positive-balance" : "negative-balance";
-            row.insertCell().textContent = new Date(
-                user.created_at,
-            ).toLocaleDateString();
-            row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="openUserTransactionHistoryModal(${user.id}, '${user.username.replace(/'/g, "\\'")}')"><i class="fas fa-history"></i></button> <button class='btn btn-primary btn-sm' onclick='openUserModal(${JSON.stringify(user)})'><i class="fas fa-edit"></i></button> <button class='btn btn-danger btn-sm' onclick='deleteUser(${user.id})'><i class="fas fa-trash"></i></button>`;
-        });
-        if (customerTableBody.rows.length === 0 && usersDataCache.length > 0)
-            customerTableBody.innerHTML =
-                '<tr><td colspan="8" style="text-align:center;">No financial activity for listed customers.</td></tr>';
-    } catch (error) {
-        console.error("Error loading customer summaries:", error);
-        if(customerTableBody)
-            customerTableBody.innerHTML = `<tr><td colspan="8" style="text-align:center;">Error: ${error.message}</td></tr>`;
-    }
-}
-
-async function loadSupplierSummaries() {
-    const supplierTableBody = document.getElementById("supplierTableBody");
-    if(!supplierTableBody) return;
-    supplierTableBody.innerHTML =
-        '<tr><td colspan="6" style="text-align:center;">Loading supplier data...</td></tr>';
-    try {
-        const suppliers = await loadLenders("Supplier", true); // Force refresh for suppliers
-
-        supplierTableBody.innerHTML = "";
-        if (!Array.isArray(suppliers) || suppliers.length === 0) {
-            supplierTableBody.innerHTML =
-                '<tr><td colspan="6" style="text-align:center;">No suppliers found. Add them via "+ Add Supplier" button.</td></tr>';
-            return;
-        }
-
-        suppliers.forEach((supplier) => {
-            const row = supplierTableBody.insertRow();
-            row.insertCell().textContent = supplier.id;
-            row.insertCell().textContent = supplier.lender_name;
-            row.insertCell().textContent = supplier.contact_person || "-";
-            
-            const payableCell = row.insertCell();
-            const currentPayable = parseFloat(supplier.current_payable || 0); 
-            payableCell.textContent = currentPayable.toFixed(2);
-            payableCell.className =
-                currentPayable > 0 
-                    ? "negative-balance" 
-                    : currentPayable < 0 
-                      ? "positive-balance"
-                      : "";
-
-            row.insertCell().textContent = supplier.notes || "-";
-            row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="viewBusinessExternalTransactions('${supplier.lender_name.replace(/'/g, "\\'")}', 'Supplier', ${supplier.id})"><i class="fas fa-list-alt"></i></button> <button class='btn btn-primary btn-sm' onclick='openLenderModal(${JSON.stringify(supplier)}, "Supplier")'><i class="fas fa-edit"></i></button>`;
-        });
-
-        if (supplierTableBody.rows.length === 0 && suppliers.length > 0) {
-            supplierTableBody.innerHTML =
-                '<tr><td colspan="6" style="text-align:center;">No financial activity or payable info for listed suppliers.</td></tr>';
-        } else if (
-            supplierTableBody.rows.length === 0 &&
-            suppliers.length === 0
-        ) {
-             supplierTableBody.innerHTML =
-                '<tr><td colspan="6" style="text-align:center;">No suppliers found.</td></tr>';
-        }
-    } catch (error) {
-        console.error("Error loading supplier summaries:", error);
-        if(supplierTableBody)
-            supplierTableBody.innerHTML = `<tr><td colspan="6" style="text-align:center;">Error: ${error.message}</td></tr>`;
-    }
-}
-
-
-async function populateAgreementEntityDropdown() {
-    const dropdown = document.getElementById("agreement_entity_id");
-    if (!dropdown) return;
-    try {
-        let entitiesToUse = externalEntitiesCache;
-        if(!Array.isArray(entitiesToUse) || (entitiesToUse.length === 0 && !isLoadingLenders)) {
-            entitiesToUse = await loadLenders(null, true); 
-        }
-        dropdown.innerHTML =
-            '<option value="">Select External Entity...</option>';
-        if(Array.isArray(entitiesToUse)) {
-            entitiesToUse.forEach((entity) => {
-                const option = document.createElement("option");
-                option.value = entity.id;
-                option.textContent = `${entity.lender_name} (${entity.entity_type || 'General'})`;
-                dropdown.appendChild(option);
-            });
-        }
-    } catch (error) {
-        console.error(error);
-        if(dropdown)
-            dropdown.innerHTML =
-                '<option value="">Error loading entities</option>';
-    }
-}
-function openCreateBusinessChitLoanAgreementModal(agreement = null) {
-    const modal = document.getElementById("businessChitLoanAgreementModal");
-    const form = document.getElementById("businessChitLoanAgreementForm");
-    const title = document.getElementById(
-        "businessChitLoanAgreementModalTitle",
-    );
-    form.reset();
-    editingAgreementId = null;
-    document.getElementById("agreementId").value = "";
-    document.getElementById("agreement_interest_rate").value = "";
-
-
-    populateAgreementEntityDropdown().then(() => {
-        if (agreement) {
-            editingAgreementId = agreement.agreement_id || agreement.id; 
-            title.textContent = "Edit Business Finance Agreement";
-            document.getElementById("agreementId").value = editingAgreementId;
-            document.getElementById("agreement_entity_id").value =
-                agreement.lender_id;
-            document.getElementById("agreement_type").value =
-                agreement.agreement_type;
-            document.getElementById("agreement_total_amount").value =
-                agreement.total_amount;
-            document.getElementById("agreement_interest_rate").value = agreement.interest_rate || "0"; 
-            document.getElementById("agreement_start_date").value =
-                agreement.start_date.split("T")[0];
-            document.getElementById("agreement_details").value =
-                agreement.details || "";
-        } else {
-            title.textContent = "New Business Finance Agreement";
-            document.getElementById("agreement_start_date").value = new Date()
-                .toISOString()
-                .split("T")[0];
-            document.getElementById("agreement_interest_rate").value = "0"; 
-        }
-    });
-    modal.style.display = "block";
-}
-
-function closeBusinessChitLoanAgreementModal() {
-    const modal = document.getElementById("businessChitLoanAgreementModal");
-    if (modal) {
-        modal.style.display = "none";
-    }
-    editingAgreementId = null;
-    const form = document.getElementById("businessChitLoanAgreementForm");
-    if(form){form.reset();}
-}
-
-async function handleBusinessChitLoanAgreementSubmit(e) {
-    e.preventDefault();
-    const data = {
-        lender_id: document.getElementById("agreement_entity_id").value,
-        agreement_type: document.getElementById("agreement_type").value,
-        total_amount: parseFloat(
-            document.getElementById("agreement_total_amount").value,
-        ),
-        interest_rate: parseFloat(document.getElementById("agreement_interest_rate").value) || 0, 
-        start_date: document.getElementById("agreement_start_date").value,
-        details: document.getElementById("agreement_details").value.trim(),
-    };
-    if (
-        !data.lender_id ||
-        !data.agreement_type ||
-        isNaN(data.total_amount) ||
-        !data.start_date
-    ) {
-        alert(
-            "Please fill all required fields: Entity, Type, Total Amount, and Start Date.",
-        );
-        return;
-    }
-     if (isNaN(data.interest_rate) || data.interest_rate < 0) { 
-        alert("Interest Rate must be a valid non-negative number.");
-        return;
-    }
-    const method = editingAgreementId ? "PUT" : "POST";
-    const endpoint = editingAgreementId
-        ? `${API}/business-agreements/${editingAgreementId}`
-        : `${API}/business-agreements`;
-    try {
-        const res = await fetch(endpoint, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(data),
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(
-                result.error || `Operation failed: ${res.statusText}`,
-            );
-        alert(
-            result.message ||
-                (editingAgreementId
-                    ? "Agreement updated"
-                    : "Agreement created"),
-        );
-        closeBusinessChitLoanAgreementModal();
-        loadBusinessExternalFinanceAgreements(); 
-    } catch (error) {
-        console.error("Error saving business agreement:", error);
-        alert("Error: " + error.message);
-    }
-}
-
-async function loadBusinessExternalFinanceAgreements() {
-    if (isLoadingBusinessAgreements) return businessAgreementsCache;
-    isLoadingBusinessAgreements = true;
-    const tableBody = document.getElementById(
-        "businessExternalFinanceTableBody",
-    );
-    if(!tableBody) {isLoadingBusinessAgreements = false; return []; }
-    tableBody.innerHTML =
-        '<tr><td colspan="8" style="text-align:center;">Loading business agreements...</td></tr>'; 
-    try {
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions)
-            await loadAllTransactions(); 
-        const agreementsRes = await fetch(`${API}/business-agreements`);
-        if (!agreementsRes.ok) {
-            const errTxt = await agreementsRes
-                .text()
-                .catch(() => "Failed to read error");
-            throw new Error(
-                `Agreements fetch failed: ${agreementsRes.status} ${errTxt}`,
-            );
-        }
-        const data = await agreementsRes.json();
-        businessAgreementsCache = Array.isArray(data) ? data : [];
-        displayBusinessExternalFinanceAgreements();
-        return businessAgreementsCache;
-    } catch (error) {
-        console.error("Error loading business agreements:", error);
-        businessAgreementsCache = [];
-        if(tableBody)
-            tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center;">Error: ${error.message}</td></tr>`;
-        return [];
-    } finally {
-        isLoadingBusinessAgreements = false;
-    }
-}
-
-function displayBusinessExternalFinanceAgreements() {
-    const tableBody = document.getElementById(
-        "businessExternalFinanceTableBody",
-    );
-    if(!tableBody) return;
-    tableBody.innerHTML = "";
-
-    if (
-        !Array.isArray(businessAgreementsCache) ||
-        businessAgreementsCache.length === 0
-    ) {
-        tableBody.innerHTML =
-            '<tr><td colspan="8" style="text-align:center;">No agreements found.</td></tr>'; 
-        return;
-    }
-    businessAgreementsCache.forEach((agreement) => {
-        const relatedTransactions = allTransactionsCache.filter(tx => tx.agreement_id === agreement.agreement_id);
-
-        let amountPaidOrReceivedByBiz = 0; 
-        let netBalanceToSettle = parseFloat(agreement.total_amount) || 0;
-
-        let interestPayableForDisplay = (agreement.interest_payable !== undefined) ? parseFloat(agreement.interest_payable).toFixed(2) : "N/A";
-        
-        if (agreement.agreement_type === 'loan_taken_by_biz') {
-            amountPaidOrReceivedByBiz = agreement.calculated_principal_paid || 0;
-            netBalanceToSettle = (parseFloat(agreement.total_amount) || 0) - amountPaidOrReceivedByBiz;
-        } else if (agreement.agreement_type === 'loan_given_by_biz') {
-            amountPaidOrReceivedByBiz = agreement.calculated_principal_received_by_biz || 0; 
-            let interestReceivableForDisplay = parseFloat(agreement.interest_receivable || 0);
-            let principalOwedToBiz = (parseFloat(agreement.total_amount) || 0) - amountPaidOrReceivedByBiz;
-            netBalanceToSettle = principalOwedToBiz + interestReceivableForDisplay;
-            interestPayableForDisplay = "N/A"; 
-        } else if (agreement.agreement_type === 'chit_participation') {
-            let totalInstallmentsPaidByBiz = 0;
-            let totalPayoutReceivedByBiz = 0;
-            relatedTransactions.forEach(tx => {
-                 const catInfo = transactionCategories.find(c => c.name === tx.category); 
-                 const amount = parseFloat(tx.amount);
-                 if (catInfo && catInfo.name.startsWith("Business Pays Chit Installment") && amount < 0) { 
-                     totalInstallmentsPaidByBiz -= amount;
-                 } else if (catInfo && catInfo.name.startsWith("Business Receives Chit Payout") && amount > 0) { 
-                     totalPayoutReceivedByBiz += amount;
-                 }
-            });
-            amountPaidOrReceivedByBiz = totalInstallmentsPaidByBiz; 
-            if (totalPayoutReceivedByBiz > 0) {
-                netBalanceToSettle = totalPayoutReceivedByBiz - totalInstallmentsPaidByBiz;
-            } else {
-                netBalanceToSettle = (parseFloat(agreement.total_amount) || 0) - totalInstallmentsPaidByBiz;
-            }
-            interestPayableForDisplay = "N/A"; 
-        }
-
-
-        const row = tableBody.insertRow();
-        row.insertCell().textContent = agreement.lender_name;
-        row.insertCell().textContent = agreement.agreement_type
-            .replace(/_/g, " ")
-            .replace(/\b\w/g, (l) => l.toUpperCase());
-        row.insertCell().textContent = (parseFloat(agreement.total_amount) || 0).toFixed(2);
-        row.insertCell().textContent = (parseFloat(agreement.interest_rate) || 0).toFixed(2) + "%"; 
-        
-        const interestPayableCell = row.insertCell();
-        interestPayableCell.textContent = interestPayableForDisplay;
-        interestPayableCell.className = (parseFloat(interestPayableForDisplay) > 0 && agreement.agreement_type === 'loan_taken_by_biz') ? "negative-balance num" : "num";
-
-
-        const paidReceivedCell = row.insertCell();
-        paidReceivedCell.textContent = amountPaidOrReceivedByBiz.toFixed(2);
-         if(agreement.agreement_type === 'loan_taken_by_biz' || (agreement.agreement_type === 'chit_participation' && amountPaidOrReceivedByBiz > 0) ) {
-            paidReceivedCell.className = "negative num"; 
-        } else if (agreement.agreement_type === 'loan_given_by_biz' || (agreement.agreement_type === 'chit_participation' && amountPaidOrReceivedByBiz <= 0 && netBalanceToSettle > 0 )) {
-             paidReceivedCell.className = "positive num"; 
-        } else {
-            paidReceivedCell.className = "num";
-        }
-
-
-        const balanceCell = row.insertCell();
-        balanceCell.textContent = netBalanceToSettle.toFixed(2);
-        if(agreement.agreement_type === 'loan_taken_by_biz') { 
-            balanceCell.className = netBalanceToSettle > 0 ? "negative-balance num" : netBalanceToSettle <= 0 ? "positive-balance num" : "num";
-        } else if(agreement.agreement_type === 'loan_given_by_biz') { 
-             balanceCell.className = netBalanceToSettle > 0 ? "positive-balance num" : netBalanceToSettle <= 0 ? "negative-balance num" : "num";
-        } else if (agreement.agreement_type === 'chit_participation') { 
-            balanceCell.className = netBalanceToSettle >= 0 ? "positive-balance num" : "negative-balance num";
-        } else {
-            balanceCell.className = "num";
-        }
-        row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="viewAgreementTransactions(${agreement.agreement_id}, '${agreement.lender_name.replace(/'/g, "\\'")}')"><i class="fas fa-list-alt"></i></button> <button class="btn btn-sm btn-primary" onclick="openCreateBusinessChitLoanAgreementModal(${JSON.stringify(agreement)})"><i class="fas fa-edit"></i></button> <button class="btn btn-sm btn-danger" onclick="deleteBusinessAgreement(${agreement.agreement_id})"><i class="fas fa-trash"></i></button>`;
-    });
-
-    if (tableBody.rows.length === 0 && businessAgreementsCache.length > 0) {
-        tableBody.innerHTML =
-            '<tr><td colspan="8" style="text-align:center;">No transactions matched agreements.</td></tr>';
-    }
-
-    const tableHeader = document.querySelector("#businessExternalFinanceTable thead tr");
-    if (tableHeader && tableHeader.cells.length !== 8) { 
-        tableHeader.innerHTML = `<th>Provider/Entity Name</th><th>Type</th><th class="num">Total Amt (₹)</th><th>Interest Rate (%)</th><th class="num">Interest Payable (₹)</th><th class="num">Net Paid/Received (₹)</th><th class="num">Net Balance (₹)</th><th>Actions</th>`;
-    }
-}
-
-async function deleteBusinessAgreement(agreementId) {
-    if (
-        !confirm(
-            "Are you sure you want to delete this business agreement? This will not delete associated transactions.",
-        )
-    )
-        return;
-    try {
-        const res = await fetch(`${API}/business-agreements/${agreementId}`, {
-            method: "DELETE",
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(
-                result.error || `Failed to delete: ${res.statusText}`,
-            );
-        alert(result.message || "Business agreement deleted");
-        loadBusinessExternalFinanceAgreements();
-    } catch (error) {
-        console.error("Error deleting agreement:", error);
-        alert("Error: " + error.message);
-    }
-}
-
-function openTransactionModalForBusinessExternal() {
-    openTransactionModal(null, null, true);
-}
-
-
-
-function openUserTransactionHistoryModal(
-    userId,
-    userName,
-    initialFilter = 'all',
-) {
-    currentViewingUserId = userId;
-    currentViewingUserName = userName;
-    const modal = document.getElementById("userTransactionHistoryModal");
-    const title = document.getElementById("userTransactionHistoryModalTitle");
-    const filterDropdown = document.getElementById(
-        "userTxHistoryCategoryFilter",
-    );
-    title.textContent = `Transaction History for ${userName}`;
-    filterDropdown.value = initialFilter;
-    filterDropdown.dataset.userId = userId;
-    filterDropdown.dataset.userName = userName;
-    loadUserTransactionHistory(userId, userName, initialFilter);
-    modal.style.display = "block";
-}
-function closeUserTransactionHistoryModal() {
-    const modal = document.getElementById("userTransactionHistoryModal");
-    if (modal) {
-        modal.style.display = "none";
-    }
-    currentViewingUserId = null;
-    currentViewingUserName = null;
-}
-async function loadUserTransactionHistory(
-    userId,
-    userName,
-    categoryGroupFilter = 'all',
-) {
-    const tableBody = document.getElementById(
-        "userTransactionHistoryTableBody",
-    );
-    if(!tableBody) return;
-    tableBody.innerHTML =
-        '<tr><td colspan="4" style="text-align:center;">Loading history...</td></tr>';
-    try {
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions)
-            await loadAllTransactions();
-        let userTransactions = allTransactionsCache.filter(
-            (tx) => tx.user_id === userId,
-        );
-        if (categoryGroupFilter !== 'all') {
-            userTransactions = userTransactions.filter(tx => {
-                const categoryInfo = transactionCategories.find(cat => cat.name === tx.category); // Use detailed categories
-                if(!categoryInfo || !categoryInfo.group) return false;
-
-                if(categoryGroupFilter === "customer_loan") return categoryInfo.group === "customer_loan_out" || categoryInfo.group === "customer_loan_in";
-                else if(categoryGroupFilter === "customer_chit") return categoryInfo.group === "customer_chit_in" || categoryInfo.group === "customer_chit_out";
-                else if(categoryGroupFilter === "customer_revenue") return categoryInfo.group === "customer_revenue" || categoryInfo.group === "customer_service"; 
-                return categoryInfo.group === categoryGroupFilter;
-            });
-        }
-        userTransactions.sort(
-            (a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id,
-        );
-        tableBody.innerHTML = "";
-        if (userTransactions.length === 0) {
-            tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No transactions found for ${userName} with selected filter.</td></tr>`;
-            return;
-        }
-        userTransactions.forEach((tx) => {
-            const row = tableBody.insertRow();
-            row.insertCell().textContent = new Date(
-                tx.date,
-            ).toLocaleDateString();
-            row.insertCell().textContent = tx.category || "-";
-            row.insertCell().textContent = tx.description || "-";
-            const amountCell = row.insertCell();
-            amountCell.textContent = tx.amount.toFixed(2);
-            amountCell.className = tx.amount >= 0 ? "positive" : "negative";
-        });
-    } catch (error) {
-        console.error(
-            `Error loading transaction history for user ${userId}:`,
-            error,
-        );
-        if(tableBody)
-            tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;">Error: ${error.message}</td></tr>`;
-    }
-}
-
-function viewBusinessExternalTransactions(entityName, entityType, entityId){
-    alert(`Viewing transactions for ${entityType}: ${entityName} (ID: ${entityId}). (Modal/detailed view to be implemented)\nThis currently relies on matching the lender_id in transactions.`);
-    const entityTxns = allTransactionsCache.filter(tx => tx.lender_id === entityId);
-    console.log(`Filtered transactions for ${entityType} ${entityName}:`, entityTxns);
-}
-function viewAgreementTransactions(agreementId, lenderName){
-     alert(`Viewing transactions for agreement with ${lenderName} (ID: ${agreementId}). (Modal/detailed view to be implemented)\nThis currently relies on matching the agreement_id in transactions.`);
-    const agreementTxns = allTransactionsCache.filter(tx => tx.agreement_id === agreementId);
-    console.log("Filtered transactions for agreement:", agreementId, agreementTxns);
-}
-// --- START OF SCRIPT.JS CHUNK 6 (NEW - Product and Supplier Linking) ---
-// --- PRODUCT & PRODUCT-SUPPLIER LOGIC ---
-async function loadProducts() {
-    if (isLoadingProducts) return productsCache;
-    isLoadingProducts = true;
-    const tableBody = document.getElementById("productTableBody");
-    if (tableBody)
-        tableBody.innerHTML =
-            '<tr><td colspan="9" style="text-align:center;">Loading products...</td></tr>';
-    try {
-        const res = await fetch(`${API}/products`);
-        if (!res.ok) {
-            const errTxt = await res
-                .text()
-                .catch(() => "Could not read error response.");
-            throw new Error(`Products fetch failed: ${res.status} ${errTxt}`);
-        }
-        const data = await res.json();
-        productsCache = Array.isArray(data) ? data : [];
-        displayProducts();
-        updateDashboardCards();
-        return productsCache;
-    } catch (error) {
-        console.error("Error loading products:", error);
-        if(tableBody)
-            tableBody.innerHTML = `<tr><td colspan="9" style="text-align:center;">Error: ${error.message}</td></tr>`;
-        productsCache = [];
-        return [];
-    } finally {
-        isLoadingProducts = false;
-    }
-}
-
-function displayProducts() {
-    const tableBody = document.getElementById("productTableBody");
-    if(!tableBody) return;
-    tableBody.innerHTML = "";
-    if (!Array.isArray(productsCache) || productsCache.length === 0) {
-        tableBody.innerHTML =
-            '<tr><td colspan="9" style="text-align:center;">No products found. Add one.</td></tr>';
-        return;
-    }
-    productsCache.forEach((product) => {
-        const row = tableBody.insertRow();
-        row.insertCell().textContent = product.id;
-        row.insertCell().textContent = product.product_name;
-        row.insertCell().textContent = product.sku || "-";
-        row.insertCell().textContent = product.preferred_supplier_name || "-";
-        
-        const prefPurchasePriceCell = row.insertCell();
-        prefPurchasePriceCell.textContent = (product.preferred_supplier_purchase_price !== null && product.preferred_supplier_purchase_price !== undefined) ? parseFloat(product.preferred_supplier_purchase_price).toFixed(2) : "-";
-        prefPurchasePriceCell.classList.add("num");
-
-        const costPriceCell = row.insertCell();
-        costPriceCell.textContent = (product.cost_price || 0).toFixed(2);
-        costPriceCell.classList.add("num");
-
-        const salePriceCell = row.insertCell();
-        salePriceCell.textContent = product.sale_price.toFixed(2);
-        salePriceCell.classList.add("num");
-
-        row.insertCell().textContent = product.current_stock;
-        const actionsCell = row.insertCell();
-        actionsCell.innerHTML = `
-            <button class='btn btn-primary btn-sm' onclick='openProductModal(${product.id})'><i class="fas fa-edit"></i></button>
-            <button class='btn btn-danger btn-sm' onclick='deleteProduct(${product.id})'><i class="fas fa-trash"></i></button>
-        `;
-    });
-}
-
-async function openProductModal(productIdOrNull = null) {
-    const modal = document.getElementById("productModal");
-    const form = document.getElementById("productForm");
-    const title = document.getElementById("productModalTitle");
-    form.reset();
-    editingProductId = productIdOrNull;
-    currentLinkingProductId = productIdOrNull; 
-    
-    document.getElementById("productId").value = productIdOrNull || "";
-    document.getElementById("productSuppliersTableBody").innerHTML = "";
-    const linkSupplierBtn = document.querySelector(
-        '#productModal button[onclick="openProductSupplierLinkModal()"]',
-    );
-
-    if (productIdOrNull) {
-        title.textContent = "Edit Product & Manage Suppliers";
-        if(linkSupplierBtn) {
-            linkSupplierBtn.disabled = false;
-            linkSupplierBtn.title = "Link a supplier to this product";
-            linkSupplierBtn.classList.remove('btn-disabled'); 
-        }
-        try {
-            const productRes = await fetch(
-                `${API}/products/${productIdOrNull}`,
-            );
-            if (!productRes.ok)
-                throw new Error("Failed to fetch product details.");
-            const product = await productRes.json();
-
-            document.getElementById("productName").value =
-                product.product_name || "";
-            document.getElementById("productSku").value = product.sku || "";
-            document.getElementById("productHsnAcs").value =
-                product.hsn_acs_code || "";
-            document.getElementById("productDescription").value =
-                product.description || "";
-            document.getElementById("productCostPrice").value =
-                product.cost_price !== undefined ? product.cost_price : "";
-            document.getElementById("productSalePrice").value =
-                product.sale_price !== undefined ? product.sale_price : "";
-            document.getElementById("productCurrentStock").value =
-                product.current_stock !== undefined
-                    ? product.current_stock
-                    : "";
-            document.getElementById("productUnitOfMeasure").value =
-                product.unit_of_measure || "pcs";
-            document.getElementById("productLowStockThreshold").value =
-                product.low_stock_threshold !== undefined
-                    ? product.low_stock_threshold
-                    : 0;
-            document.getElementById("productReorderLevel").value =
-                product.reorder_level !== undefined ? product.reorder_level : 0;
-
-            productSuppliersCache = product.suppliers || [];
-            displayProductSuppliersList(productSuppliersCache);
-        } catch (error) {
-            console.error("Error opening product modal for edit:", error);
-            alert("Could not load product details: " + error.message);
-            closeProductModal();
-            return;
-        }
-    } else {
-        title.textContent = "Add New Product";
-        currentLinkingProductId = null; 
-        document.getElementById("productUnitOfMeasure").value = "pcs";
-        document.getElementById("productLowStockThreshold").value = 0;
-        document.getElementById("productReorderLevel").value = 0;
-        productSuppliersCache = [];
-        displayProductSuppliersList([]);
-        if(linkSupplierBtn) {
-            linkSupplierBtn.disabled = true;
-            linkSupplierBtn.title = "Save product first to link suppliers";
-            linkSupplierBtn.classList.add('btn-disabled'); 
-        }
-    }
-    modal.style.display = "block";
-}
-
-function closeProductModal() {
-    const modal = document.getElementById("productModal");
-    if (modal) {
-        modal.style.display = "none";
-    }
-    editingProductId = null;
-    currentLinkingProductId = null;
-    const form = document.getElementById("productForm");
-    if(form){form.reset();}
-    document.getElementById("productSuppliersTableBody").innerHTML = "";
-    productSuppliersCache = [];
-}
-
-async function handleProductSubmit(e) {
-    e.preventDefault();
-    const productModalTitle = document.getElementById("productModalTitle"); 
-    const data = {
-        product_name: document.getElementById("productName").value.trim(),
-        sku: document.getElementById("productSku").value.trim() || null,
-        hsn_acs_code:
-            document.getElementById("productHsnAcs").value.trim() || null,
-        description: document.getElementById("productDescription").value.trim(),
-        cost_price:
-            parseFloat(document.getElementById("productCostPrice").value) || 0,
-        sale_price: parseFloat(
-            document.getElementById("productSalePrice").value,
-        ),
-        current_stock: parseInt(
-            document.getElementById("productCurrentStock").value,
-        ),
-        unit_of_measure:
-            document.getElementById("productUnitOfMeasure").value.trim() ||
-            "pcs",
-        low_stock_threshold:
-            parseInt(
-                document.getElementById("productLowStockThreshold").value,
-            ) || 0,
-        reorder_level:
-            parseInt(document.getElementById("productReorderLevel").value) || 0,
-    };
-
-    if (
-        !data.product_name ||
-        isNaN(data.sale_price) ||
-        isNaN(data.current_stock)
-    ) {
-        alert(
-            "Product Name, Sale Price, and Current Stock are required and must be valid numbers.",
-        );
-        return;
-    }
-
-    const method = editingProductId ? "PUT" : "POST";
-    const endpoint = editingProductId
-        ? `${API}/products/${editingProductId}`
-        : `${API}/products`;
-
-    try {
-        const res = await fetch(endpoint, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(data),
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(
-                result.error || `Operation failed: ${res.statusText}`,
-            );
-
-        alert(
-            result.message ||
-                (editingProductId
-                    ? "Product details updated"
-                    : "Product created"),
-        );
-
-        if (method === "POST" && result.product && result.product.id) {
-            editingProductId = result.product.id; 
-            currentLinkingProductId = result.product.id; 
-            console.log('New product saved, currentLinkingProductId set to:', currentLinkingProductId); 
-
-            document.getElementById("productId").value = editingProductId;
-            if (productModalTitle) 
-                productModalTitle.textContent =
-                    "Edit Product & Manage Suppliers";
-            const linkSupplierBtn = document.querySelector(
-                '#productModal button[onclick="openProductSupplierLinkModal()"]',
-            );
-            if (linkSupplierBtn) {
-                linkSupplierBtn.disabled = false;
-                linkSupplierBtn.title = "Link a supplier to this product";
-                linkSupplierBtn.classList.remove('btn-disabled');
-            }
-        }
-
-        await loadProducts(); 
-        if (editingProductId) { 
-            await loadAndDisplayProductSuppliers(editingProductId);
-        }
-        await loadLenders(null, true); 
-        if (document.getElementById("supplierManagementSection")?.style.display === 'block') {
-             loadSupplierSummaries(); 
-        }
-        
-    } catch (error) {
-        console.error("Error saving product details:", error);
-        alert("Error saving product details: " + error.message);
-    }
-}
-
-async function deleteProduct(productId) {
-    if (
-        !confirm(
-            "Are you sure you want to delete this product? This action CANNOT be undone and will also remove associated supplier links.",
-        )
-    )
-        return;
-    try {
-        const res = await fetch(`${API}/products/${productId}`, {
-            method: "DELETE",
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(
-                result.error || `Failed to delete product: ${res.statusText}`,
-            );
-        alert(result.message || "Product deleted");
-        await loadProducts();
-        await loadLenders(null, true); 
-        if (document.getElementById("supplierManagementSection")?.style.display === 'block') {
-             loadSupplierSummaries(); 
-        }
-
-    } catch (error) {
-        console.error("Error deleting product:", error);
-        alert("Error deleting product: " + error.message);
-    }
-}
-
-
-async function openProductSupplierLinkModal(linkData = null) {
-    console.log("openProductSupplierLinkModal called. currentLinkingProductId:", currentLinkingProductId); 
-    if (!currentLinkingProductId) {
-        alert(
-            "Please save the product details first OR ensure an existing product is loaded before linking suppliers.",
-        );
-        return; 
-    }
-    editingProductSupplierLinkId = linkData
-        ? linkData.product_supplier_id
-        : null;
-
-    const modal = document.getElementById("productSupplierLinkModal");
-    const form = document.getElementById("productSupplierLinkForm");
-    const title = document.getElementById("productSupplierLinkModalTitle");
-    form.reset();
-
-    document.getElementById("linkModalProductId").value =
-        currentLinkingProductId;
-    document.getElementById("productSupplierLinkId").value =
-        editingProductSupplierLinkId || "";
-
-    await populateSuppliersForProductLinkModal();
-
-    if (linkData) {
-        const currentProduct = productsCache.find(
-            (p) => p.id == currentLinkingProductId,
-        );
-        title.textContent = `Edit Supplier Link for ${currentProduct?.product_name || "Product"}`;
-        document.getElementById("linkSupplierId").value = linkData.supplier_id;
-        document.getElementById("linkSupplierSku").value =
-            linkData.supplier_sku || "";
-        document.getElementById("linkSupplierPurchasePrice").value =
-            linkData.purchase_price !== null
-                ? parseFloat(linkData.purchase_price).toFixed(2)
-                : "";
-        document.getElementById("linkSupplierLeadTime").value =
-            linkData.lead_time_days || "";
-        document.getElementById("linkIsPreferredSupplier").checked =
-            !!linkData.is_preferred;
-        document.getElementById("linkSupplierNotes").value =
-            linkData.supplier_specific_notes || linkData.notes || "";
-    } else {
-        const currentProduct = productsCache.find(
-            (p) => p.id == currentLinkingProductId,
-        );
-        title.textContent = `Link New Supplier to ${currentProduct?.product_name || "Product"}`;
-    }
-    modal.style.display = "block";
-}
-
-function closeProductSupplierLinkModal() {
-    const modal = document.getElementById("productSupplierLinkModal");
-    if (modal) modal.style.display = "none";
-    editingProductSupplierLinkId = null;
-    document.getElementById("productSupplierLinkForm").reset();
-}
-
-async function populateSuppliersForProductLinkModal() {
-    const dropdown = document.getElementById("linkSupplierId");
-    if (!dropdown) return;
-
-    if (externalEntitiesCache.length === 0 && !isLoadingLenders) {
-        await loadLenders(null, true); // Force load if cache is empty
-    }
-    const suppliers = externalEntitiesCache.filter(
-        (e) => e.entity_type === 'Supplier',
-    );
-
-    const currentValue = dropdown.value;
-    dropdown.innerHTML = '<option value="">Select Supplier...</option>';
-    suppliers.forEach((supplier) => {
-        const option = document.createElement("option");
-        option.value = supplier.id;
-        option.textContent = supplier.lender_name;
-        dropdown.appendChild(option);
-    });
-    if (currentValue) dropdown.value = currentValue;
-}
-
-
-async function handleProductSupplierLinkSubmit(e) {
-    e.preventDefault();
-    const productId = document.getElementById("linkModalProductId").value;
-    const supplierId = document.getElementById("linkSupplierId").value;
-
-    if (!productId || !supplierId) {
-        alert("Product and Supplier must be selected.");
-        return;
-    }
-
-    const data = {
-        product_id: parseInt(productId),
-        supplier_id: parseInt(supplierId),
-        supplier_sku:
-            document.getElementById("linkSupplierSku").value.trim() || null,
-        purchase_price: document.getElementById("linkSupplierPurchasePrice")
-            .value
-            ? parseFloat(
-                  document.getElementById("linkSupplierPurchasePrice").value,
-              )
-            : null,
-        lead_time_days: document.getElementById("linkSupplierLeadTime").value
-            ? parseInt(document.getElementById("linkSupplierLeadTime").value)
-            : null,
-        is_preferred: document.getElementById("linkIsPreferredSupplier")
-            .checked,
-        notes:
-            document.getElementById("linkSupplierNotes").value.trim() || null,
-    };
-
-    const method = editingProductSupplierLinkId ? "PUT" : "POST";
-    const endpoint = editingProductSupplierLinkId
-        ? `${API}/product-suppliers/${editingProductSupplierLinkId}`
-        : `${API}/product-suppliers`;
-
-    try {
-        const res = await fetch(endpoint, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(data),
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(
-                result.error || "Failed to save product-supplier link.",
-            );
-
-        alert(result.message || "Product-supplier link saved.");
-        closeProductSupplierLinkModal();
-        await loadAndDisplayProductSuppliers(productId); 
-        await loadProducts(); 
-        await loadLenders(null, true); 
-        if (document.getElementById("supplierManagementSection")?.style.display === 'block') {
-             loadSupplierSummaries(); 
-        }
-    } catch (error) {
-        console.error("Error saving product-supplier link:", error);
-        alert("Error: " + error.message);
-    }
-}
-
-async function loadAndDisplayProductSuppliers(productId) {
-    if (!productId) {
-        displayProductSuppliersList([]);
-        return;
-    }
-    try {
-        const res = await fetch(
-            `${API}/product-suppliers/product/${productId}`,
-        );
-        if (!res.ok)
-            throw new Error("Failed to fetch suppliers for this product.");
-        productSuppliersCache = await res.json();
-        displayProductSuppliersList(productSuppliersCache);
-    } catch (error) {
-        console.error("Error loading product suppliers:", error);
-        displayProductSuppliersList([]);
-    }
-}
-
-function displayProductSuppliersList(suppliers) {
-    const tableBody = document.getElementById("productSuppliersTableBody");
-    if (!tableBody) return;
-    tableBody.innerHTML = "";
-
-    if (!suppliers || suppliers.length === 0) {
-        tableBody.innerHTML =
-            '<tr><td colspan="5" style="text-align:center;">No suppliers linked yet.</td></tr>';
-        return;
-    }
-
-    suppliers.forEach((link) => {
-        const row = tableBody.insertRow();
-        row.insertCell().textContent =
-            link.supplier_name || `Supplier ID: ${link.supplier_id}`;
-        row.insertCell().textContent = link.supplier_sku || "-";
-        row.insertCell().textContent =
-            link.purchase_price !== null
-                ? parseFloat(link.purchase_price).toFixed(2)
-                : "-";
-        row.insertCell().innerHTML = `<input type="checkbox" ${link.is_preferred ? "checked" : ""} disabled style="margin: auto; display: block;">`;
-        const actionsCell = row.insertCell();
-        actionsCell.innerHTML = `
-            <button class="btn btn-primary btn-sm" onclick='openProductSupplierLinkModal(${JSON.stringify(link)})'><i class="fas fa-edit"></i></button>
-            <button class="btn btn-danger btn-sm" onclick='deleteProductSupplierLink(${link.product_supplier_id}, ${link.product_id})'><i class="fas fa-unlink"></i></button>
-        `;
-    });
-}
-
-
-async function deleteProductSupplierLink(
-    productSupplierId,
-    productIdToRefresh,
-) {
-    if (
-        !confirm(
-            "Are you sure you want to unlink this supplier from the product?",
-        )
-    )
-        return;
-    try {
-        const res = await fetch(
-            `${API}/product-suppliers/${productSupplierId}`,
-            { method: "DELETE" },
-        );
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(result.error || "Failed to unlink supplier.");
-        alert(result.message || "Supplier unlinked successfully.");
-        await loadAndDisplayProductSuppliers(productIdToRefresh);
-        await loadProducts();
-        await loadLenders(null, true);
-        if (document.getElementById("supplierManagementSection")?.style.display === 'block') {
-            loadSupplierSummaries();
-        }
-    } catch (error) {
-        console.error("Error unlinking supplier:", error);
-        alert("Error: " + error.message);
-    }
-}
-// --- Invoice Functions ---
-async function loadInvoices() {
-    if (isLoadingInvoices) return invoicesCache;
-    isLoadingInvoices = true;
-    const tableBody = document.getElementById("invoiceTableBody");
-    if (tableBody)
-        tableBody.innerHTML =
-            '<tr><td colspan="8" style="text-align:center;">Loading invoices...</td></tr>';
-
-    try {
-        const res = await fetch(`${API}/invoices`);
-        if (!res.ok) {
-            const errText = await res
-                .text()
-                .catch(() => "Could not read error response.");
-            throw new Error(`Invoices fetch failed: ${res.status} ${errText}`);
-        }
-        const data = await res.json();
-        invoicesCache = Array.isArray(data) ? data : [];
-        displayInvoices();
-        updateDashboardCards();
-        return invoicesCache;
-    } catch (error) {
-        console.error("Error loading invoices:", error.message);
-        if(tableBody)
-            tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center;">Error loading invoices: ${error.message}</td></tr>`;
-        invoicesCache = [];
-        return [];
-    } finally {
-        isLoadingInvoices = false;
-    }
-}
-
-function displayInvoices() {
-    const tableBody = document.getElementById("invoiceTableBody");
-    if(!tableBody) return;
-    tableBody.innerHTML = "";
-
-    if (!Array.isArray(invoicesCache) || invoicesCache.length === 0) {
-        tableBody.innerHTML =
-            '<tr><td colspan="8" style="text-align:center;">No invoices found.</td></tr>';
-        return;
-    }
-
-    invoicesCache.forEach((inv) => {
-        const row = tableBody.insertRow();
-        row.insertCell().textContent = inv.invoice_number;
-        row.insertCell().textContent =
-            inv.customer_name || `ID: ${inv.customer_id}`;
-        row.insertCell().textContent = inv.invoice_type
-            ? inv.invoice_type
-                  .replace(/_/g, " ")
-                  .replace(/\b\w/g, (l) => l.toUpperCase())
-            : "N/A";
-        row.insertCell().textContent = new Date(
-            inv.invoice_date,
-        ).toLocaleDateString();
-        row.insertCell().textContent = new Date(
-            inv.due_date,
-        ).toLocaleDateString();
-        const totalCell = row.insertCell();
-        totalCell.textContent = parseFloat(inv.total_amount).toFixed(2);
-        totalCell.classList.add("num");
-        row.insertCell().innerHTML = `<span class="status-badge status-${inv.status.toLowerCase().replace(/\s+/g, '-')}">${inv.status}</span>`;
-        row.insertCell().innerHTML = `
-            <button class="btn btn-info btn-sm" onclick="viewInvoice(${inv.id})"><i class="fas fa-eye"></i></button>
-            <button class="btn btn-secondary btn-sm" onclick="printCurrentInvoiceById(${inv.id})"><i class="fas fa-print"></i></button>
-            <button class="btn btn-danger btn-sm" onclick="deleteInvoice(${inv.id})"><i class="fas fa-trash"></i></button>
-        `;
-    });
-}
-// --- START OF SCRIPT.JS CHUNK 5a (REVISED) ---
-// --- LENDER/EXTERNAL ENTITY & BUSINESS AGREEMENT FUNCTIONS ---
-function toggleInitialPayableField(){
-    const entityTypeDropdown = document.getElementById("lenderEntityType");
-    const initialPayableGroup = document.getElementById("initialPayableGroup");
-    if (entityTypeDropdown && initialPayableGroup) {
-        if(entityTypeDropdown.value === 'Supplier') {
-            initialPayableGroup.style.display = "block";
-        } else {
-            initialPayableGroup.style.display = "none";
-            const initialPayableInput = document.getElementById("lenderInitialPayable");
-            if (initialPayableInput) initialPayableInput.value = 0;
-        }
-    }
-}
-
-
-function openLenderModal(lender = null, entityType = "General") {
-    const modal = document.getElementById("lenderModal");
-    const form = document.getElementById("lenderForm");
-    const title = document.getElementById("lenderModalTitle");
-    const typeDropdown = document.getElementById("lenderEntityType");
-    const initialPayableInput = document.getElementById("lenderInitialPayable");
-    const lenderIdInput = document.getElementById("lenderId");
-
-    if (!modal || !form || !title || !typeDropdown || !initialPayableInput || !lenderIdInput) {
-        console.error("One or more elements in lenderModal are missing from the DOM! Check IDs: lenderModal, lenderForm, lenderModalTitle, lenderEntityType, lenderInitialPayable, lenderId");
-        alert("Error: Lender modal components not found. Please check console.");
-        return;
-    }
-
-    form.reset();
-    editingLenderId = null;
-    lenderIdInput.value = "";
-    typeDropdown.value = entityType;
-    initialPayableInput.value = "0.00";
-
-    if (lender) {
-        editingLenderId = lender.id;
-        title.textContent = `Edit External Entity: ${lender.lender_name}`;
-        lenderIdInput.value = lender.id;
-        document.getElementById("lenderName").value = lender.lender_name || "";
-        typeDropdown.value = lender.entity_type || "General";
-        initialPayableInput.value = (lender.entity_type === 'Supplier' && lender.initial_payable_balance !== undefined) ? parseFloat(lender.initial_payable_balance).toFixed(2) : "0.00";
-        document.getElementById("lenderContactPerson").value =
-            lender.contact_person || "";
-        document.getElementById("lenderPhone").value = lender.phone || "";
-        document.getElementById("lenderEmail").value = lender.email || "";
-        document.getElementById("lenderNotes").value = lender.notes || "";
-    } else {
-        title.textContent = `Add New ${entityType === 'Financial' ? 'Financial Entity' : entityType}`;
-    }
-    toggleInitialPayableField();
-    modal.style.display = "block";
-}
-function closeLenderModal() {
-    const modal = document.getElementById("lenderModal");
-    if (modal) {
-        modal.style.display = "none";
-    }
-    editingLenderId = null;
-    const form = document.getElementById("lenderForm");
-    if(form){form.reset();}
-}
-async function handleLenderSubmit(e) {
-    e.preventDefault();
-    const entityType = document.getElementById("lenderEntityType").value;
-    const initialPayable = (entityType === 'Supplier') ? (parseFloat(document.getElementById("lenderInitialPayable").value) || 0) : 0;
-
-    const data = {
-        lender_name: document.getElementById("lenderName").value.trim(),
-        entity_type: entityType,
-        contact_person: document
-            .getElementById("lenderContactPerson")
-            .value.trim(),
-        phone: document.getElementById("lenderPhone").value.trim(),
-        email: document.getElementById("lenderEmail").value.trim(),
-        notes: document.getElementById("lenderNotes").value.trim(),
-        initial_payable_balance: initialPayable
-    };
-    if (!data.lender_name) {
-        alert("External Entity Name is required.");
-        return;
-    }
-    const method = editingLenderId ? "PUT" : "POST";
-    const endpoint = editingLenderId
-        ? `${API}/external-entities/${editingLenderId}`
-        : `${API}/external-entities`;
-// --- START OF SCRIPT.JS CHUNK 5b (REVISED) ---
-    // Resuming handleLenderSubmit()
-    try {
-        const res = await fetch(endpoint, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(data),
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(
-                result.error || `Operation failed: ${res.statusText}`,
-            );
-        alert(
-            result.message ||
-                (editingLenderId
-                    ? "External entity updated"
-                    : "External entity created"),
-        );
-        closeLenderModal();
-        await loadLenders(null, true); // Force reload of main externalEntitiesCache
-        if (
-            document.getElementById("supplierManagementSection")?.style
-                .display === 'block'
-        ) {
-            loadSupplierSummaries(); 
-        }
-        if (
-            document.getElementById("businessFinanceSection")?.style.display ===
-            'block'
-        ) {
-            populateAgreementEntityDropdown();
-        }
-        const linkSupplierDropdown = document.getElementById("linkSupplierId");
-        if (linkSupplierDropdown) populateSuppliersForProductLinkModal();
-
-    } catch (error) {
-        console.error("Error saving external entity:", error);
-        alert("Error: " + error.message);
-    }
-} // This closes handleLenderSubmit()
-
-async function loadLenders(entityTypeFilter = null, forceReloadAllCache = false) {
-    // If not filtering for a specific type AND main cache exists and is not being forced to reload, return main cache
-    if(!entityTypeFilter && !isLoadingLenders && externalEntitiesCache.length > 0 && !forceReloadAllCache) return externalEntitiesCache;
-
-
-    let specificLoad = !!entityTypeFilter; 
-    if(!specificLoad || forceReloadAllCache) isLoadingLenders = true; 
-
-    const tableBody = document.getElementById("lendersTableBody"); // This is for the Business Finance "External Entities" table
-
-    if (tableBody && (!specificLoad || forceReloadAllCache) && document.getElementById("businessFinanceSection")?.style.display === 'block')
-        tableBody.innerHTML =
-            '<tr><td colspan="7" style="text-align:center;">Loading external entities...</td></tr>';
-
-    try {
-        const fetchUrl = entityTypeFilter
-            ? `${API}/external-entities?type=${entityTypeFilter}`
-            : `${API}/external-entities`;
-        const res = await fetch(fetchUrl);
-        if (!res.ok)
-            throw new Error(
-                `Failed to fetch external entities: ${res.statusText} ${await res.text()}`,
-            );
-        const data = await res.json();
-
-        const entitiesToDisplay = Array.isArray(data) ? data : [];
-        
-        if(!specificLoad || forceReloadAllCache) { 
-            externalEntitiesCache = entitiesToDisplay; 
-        }
-
-        // This populates the "External Entities (Banks, Lenders, etc.)" table in Business Finance section
-        // Only if that section is active AND it's a general load or a forced reload.
-        if (tableBody && (!specificLoad || forceReloadAllCache) && document.getElementById("businessFinanceSection")?.style.display === 'block') {
-            tableBody.innerHTML = "";
-            const generalLenders = externalEntitiesCache.filter(e => e.entity_type !== 'Supplier');
-            if (generalLenders.length === 0) {
-                tableBody.innerHTML =
-                    '<tr><td colspan="7" style="text-align:center;">No general external entities found.</td></tr>';
-            } else {
-                generalLenders.forEach((entity) => {
-                    const row = tableBody.insertRow();
-                    row.insertCell().textContent = entity.id;
-                    row.insertCell().textContent = entity.lender_name;
-                    row.insertCell().textContent =
-                        entity.entity_type || 'General';
-                    row.insertCell().textContent = entity.contact_person || "-";
-                    row.insertCell().textContent = entity.phone || "-";
-                    row.insertCell().textContent = entity.notes || "-";
-                    const actionsCell = row.insertCell();
-                    actionsCell.innerHTML = `<button class='btn btn-primary btn-sm' onclick='openLenderModal(${JSON.stringify(entity)}, "${entity.entity_type}")'><i class="fas fa-edit"></i></button> <button class='btn btn-danger btn-sm' onclick='deleteLender(${entity.id})'><i class="fas fa-trash"></i></button>`;
-                });
-            }
-        }
-        if (!specificLoad || forceReloadAllCache) updateDashboardCards(); 
-        return entitiesToDisplay; 
-    } catch (error) {
-        console.error("Error loading external entities:", error);
-        if(tableBody && (!specificLoad || forceReloadAllCache))
-            tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Error: ${error.message}</td></tr>`;
-        if(!specificLoad || forceReloadAllCache) externalEntitiesCache = [];
-        return [];
-    } finally {
-        if(!specificLoad || forceReloadAllCache) isLoadingLenders = false;
-    }
-}
-
-async function deleteLender(id) {
-    if (
-        !confirm(
-            "Are you sure you want to delete this external entity? This may affect product-supplier links and business agreements.",
-        )
-    )
-        return;
-    try {
-        const res = await fetch(`${API}/external-entities/${id}`, {
-            method: "DELETE",
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(
-                result.error || `Failed to delete: ${res.statusText}`,
-            );
-        alert(result.message || "External entity deleted");
-        await loadLenders(null, true); 
-        if (
-            document.getElementById("supplierManagementSection")?.style
-                .display === 'block'
-        ) {
-            loadSupplierSummaries(); 
-        }
-        if (
-            document.getElementById("businessFinanceSection")?.style.display ===
-            'block'
-        ) {
-            populateAgreementEntityDropdown(); 
-            loadBusinessExternalFinanceAgreements();
-        }
-        const linkSupplierDropdown = document.getElementById("linkSupplierId");
-        if(linkSupplierDropdown && document.getElementById("productSupplierLinkModal").style.display === 'block') {
-             populateSuppliersForProductLinkModal(); 
-        }
-        if(document.getElementById("inventoryManagementSection")?.style.display === 'block') {
-            loadProducts(); 
-        }
-
-    } catch (error) {
-        console.error("Error deleting external entity:", error);
-        alert("Error: " + error.message);
-    }
-}
-// --- START OF SCRIPT.JS CHUNK 5c (REVISED) ---
-async function loadCustomerSummaries() {
-    const customerTableBody = document.getElementById("customerTableBody");
-    if(!customerTableBody) return;
-    customerTableBody.innerHTML =
-        '<tr><td colspan="8" style="text-align:center;">Loading customer data...</td></tr>';
-    try {
-        if (usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions)
-            await loadAllTransactions();
-        customerTableBody.innerHTML = "";
-        if (!Array.isArray(usersDataCache) || usersDataCache.length === 0) {
-            customerTableBody.innerHTML =
-                '<tr><td colspan="8" style="text-align:center;">No customers found.</td></tr>';
-            return;
-        }
-        usersDataCache.forEach((user) => {
-            let receivable = parseFloat(user.initial_balance) || 0;
-            let loanOutstanding = 0;
-            let chitNetPosition = 0;
-            allTransactionsCache
-                .filter((tx) => tx.user_id === user.id)
-                .forEach((tx) => {
-                    const categoryInfo = transactionCategories.find( // Use detailed for logic
-                        (cat) => cat.name === tx.category,
-                    );
-                    if (categoryInfo) {
-                        const amount = parseFloat(tx.amount);
-
-                        if (categoryInfo.group === "customer_revenue") receivable += amount; 
-                        else if (categoryInfo.group === "customer_payment") receivable += amount; 
-                        else if (categoryInfo.name === "Product Return from Customer (Credit Note)") receivable += amount; 
-                        else if (categoryInfo.name.startsWith("Product Return from Customer (Refund via")) receivable -= amount; 
-                        
-                        else if (categoryInfo.group === "customer_loan_out") loanOutstanding += amount; 
-                        else if (categoryInfo.group === "customer_loan_in") loanOutstanding += amount; 
-                        
-                        else if (categoryInfo.group === "customer_chit_in") chitNetPosition -= amount; 
-                        else if (categoryInfo.group === "customer_chit_out") chitNetPosition -= amount; 
-                    }
-                });
-            const row = customerTableBody.insertRow();
-            row.insertCell().textContent = user.id;
-            row.insertCell().textContent = user.username;
-            row.insertCell().textContent = (
-                parseFloat(user.initial_balance) || 0
-            ).toFixed(2);
-            const receivableCell = row.insertCell();
-            receivableCell.textContent = receivable.toFixed(2);
-            receivableCell.className =
-                receivable > 0
-                    ? "negative-balance" 
-                    : receivable < 0
-                      ? "positive-balance" 
-                      : "";
-            const loanCell = row.insertCell();
-            loanCell.textContent = loanOutstanding.toFixed(2);
-            loanCell.className = loanOutstanding > 0 ? "negative-balance" : ""; 
-            const chitCell = row.insertCell();
-            chitCell.textContent = chitNetPosition.toFixed(2);
-            chitCell.className =
-                chitNetPosition >= 0 ? "positive-balance" : "negative-balance";
-            row.insertCell().textContent = new Date(
-                user.created_at,
-            ).toLocaleDateString();
-            row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="openUserTransactionHistoryModal(${user.id}, '${user.username.replace(/'/g, "\\'")}')"><i class="fas fa-history"></i></button> <button class='btn btn-primary btn-sm' onclick='openUserModal(${JSON.stringify(user)})'><i class="fas fa-edit"></i></button> <button class='btn btn-danger btn-sm' onclick='deleteUser(${user.id})'><i class="fas fa-trash"></i></button>`;
-        });
-        if (customerTableBody.rows.length === 0 && usersDataCache.length > 0)
-            customerTableBody.innerHTML =
-                '<tr><td colspan="8" style="text-align:center;">No financial activity for listed customers.</td></tr>';
-    } catch (error) {
-        console.error("Error loading customer summaries:", error);
-        if(customerTableBody)
-            customerTableBody.innerHTML = `<tr><td colspan="8" style="text-align:center;">Error: ${error.message}</td></tr>`;
-    }
-}
-
-async function loadSupplierSummaries() {
-    const supplierTableBody = document.getElementById("supplierTableBody");
-    if(!supplierTableBody) return;
-    supplierTableBody.innerHTML =
-        '<tr><td colspan="6" style="text-align:center;">Loading supplier data...</td></tr>';
-    try {
-        const suppliers = await loadLenders("Supplier", true); // Force refresh for suppliers
-
-        supplierTableBody.innerHTML = "";
-        if (!Array.isArray(suppliers) || suppliers.length === 0) {
-            supplierTableBody.innerHTML =
-                '<tr><td colspan="6" style="text-align:center;">No suppliers found. Add them via "+ Add Supplier" button.</td></tr>';
-            return;
-        }
-
-        suppliers.forEach((supplier) => {
-            const row = supplierTableBody.insertRow();
-            row.insertCell().textContent = supplier.id;
-            row.insertCell().textContent = supplier.lender_name;
-            row.insertCell().textContent = supplier.contact_person || "-";
-            
-            const payableCell = row.insertCell();
-            const currentPayable = parseFloat(supplier.current_payable || 0); 
-            payableCell.textContent = currentPayable.toFixed(2);
-            payableCell.className =
-                currentPayable > 0 
-                    ? "negative-balance" 
-                    : currentPayable < 0 
-                      ? "positive-balance"
-                      : "";
-
-            row.insertCell().textContent = supplier.notes || "-";
-            row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="viewBusinessExternalTransactions('${supplier.lender_name.replace(/'/g, "\\'")}', 'Supplier', ${supplier.id})"><i class="fas fa-list-alt"></i></button> <button class='btn btn-primary btn-sm' onclick='openLenderModal(${JSON.stringify(supplier)}, "Supplier")'><i class="fas fa-edit"></i></button>`;
-        });
-
-        if (supplierTableBody.rows.length === 0 && suppliers.length > 0) {
-            supplierTableBody.innerHTML =
-                '<tr><td colspan="6" style="text-align:center;">No financial activity or payable info for listed suppliers.</td></tr>';
-        } else if (
-            supplierTableBody.rows.length === 0 &&
-            suppliers.length === 0
-        ) {
-             supplierTableBody.innerHTML =
-                '<tr><td colspan="6" style="text-align:center;">No suppliers found.</td></tr>';
-        }
-    } catch (error) {
-        console.error("Error loading supplier summaries:", error);
-        if(supplierTableBody)
-            supplierTableBody.innerHTML = `<tr><td colspan="6" style="text-align:center;">Error: ${error.message}</td></tr>`;
-    }
-}
-// --- START OF SCRIPT.JS CHUNK 5d (REVISED) ---
-async function populateAgreementEntityDropdown() {
-    const dropdown = document.getElementById("agreement_entity_id");
-    if (!dropdown) return;
-    try {
-        let entitiesToUse = externalEntitiesCache;
-        if(!Array.isArray(entitiesToUse) || (entitiesToUse.length === 0 && !isLoadingLenders)) {
-            entitiesToUse = await loadLenders(null, true); // Force reload of all external entities if not already cached
-        }
-        dropdown.innerHTML =
-            '<option value="">Select External Entity...</option>';
-        if(Array.isArray(entitiesToUse)) {
-            entitiesToUse.forEach((entity) => {
-                const option = document.createElement("option");
-                option.value = entity.id;
-                option.textContent = `${entity.lender_name} (${entity.entity_type || 'General'})`;
-                dropdown.appendChild(option);
-            });
-        }
-    } catch (error) {
-        console.error(error);
-        if(dropdown)
-            dropdown.innerHTML =
-                '<option value="">Error loading entities</option>';
-    }
-}
-function openCreateBusinessChitLoanAgreementModal(agreement = null) {
-    const modal = document.getElementById("businessChitLoanAgreementModal");
-    const form = document.getElementById("businessChitLoanAgreementForm");
-    const title = document.getElementById(
-        "businessChitLoanAgreementModalTitle",
-    );
-    form.reset();
-    editingAgreementId = null;
-    document.getElementById("agreementId").value = "";
-    document.getElementById("agreement_interest_rate").value = ""; // Clear this specifically
-
-
-    populateAgreementEntityDropdown().then(() => {
-        if (agreement) {
-            editingAgreementId = agreement.agreement_id || agreement.id; 
-            title.textContent = "Edit Business Finance Agreement";
-            document.getElementById("agreementId").value = editingAgreementId;
-            document.getElementById("agreement_entity_id").value =
-                agreement.lender_id;
-            document.getElementById("agreement_type").value =
-                agreement.agreement_type;
-            document.getElementById("agreement_total_amount").value =
-                agreement.total_amount;
-            document.getElementById("agreement_interest_rate").value = (agreement.interest_rate !== undefined && agreement.interest_rate !== null) ? agreement.interest_rate : "0"; 
-            document.getElementById("agreement_start_date").value =
-                agreement.start_date.split("T")[0];
-            document.getElementById("agreement_details").value =
-                agreement.details || "";
-        } else {
-            title.textContent = "New Business Finance Agreement";
-            document.getElementById("agreement_start_date").value = new Date()
-                .toISOString()
-                .split("T")[0];
-            document.getElementById("agreement_interest_rate").value = "0"; 
-        }
-    });
-    modal.style.display = "block";
-}
-
-function closeBusinessChitLoanAgreementModal() {
-    const modal = document.getElementById("businessChitLoanAgreementModal");
-    if (modal) {
-        modal.style.display = "none";
-    }
-    editingAgreementId = null;
-    const form = document.getElementById("businessChitLoanAgreementForm");
-    if(form){form.reset();}
-}
-
-async function handleBusinessChitLoanAgreementSubmit(e) {
-    e.preventDefault();
-    const data = {
-        lender_id: document.getElementById("agreement_entity_id").value,
-        agreement_type: document.getElementById("agreement_type").value,
-        total_amount: parseFloat(
-            document.getElementById("agreement_total_amount").value,
-        ),
-        interest_rate: parseFloat(document.getElementById("agreement_interest_rate").value) || 0, 
-        start_date: document.getElementById("agreement_start_date").value,
-        details: document.getElementById("agreement_details").value.trim(),
-    };
-    if (
-        !data.lender_id ||
-        !data.agreement_type ||
-        isNaN(data.total_amount) ||
-        !data.start_date
-    ) {
-        alert(
-            "Please fill all required fields: Entity, Type, Total Amount, and Start Date.",
-        );
-        return;
-    }
-     if (isNaN(data.interest_rate) || data.interest_rate < 0) { 
-        alert("Interest Rate must be a valid non-negative number.");
-        return;
-    }
-    const method = editingAgreementId ? "PUT" : "POST";
-    const endpoint = editingAgreementId
-        ? `${API}/business-agreements/${editingAgreementId}`
-        : `${API}/business-agreements`;
-    try {
-        const res = await fetch(endpoint, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(data),
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(
-                result.error || `Operation failed: ${res.statusText}`,
-            );
-        alert(
-            result.message ||
-                (editingAgreementId
-                    ? "Agreement updated"
-                    : "Agreement created"),
-        );
-        closeBusinessChitLoanAgreementModal();
-        loadBusinessExternalFinanceAgreements(); 
-    } catch (error) {
-        console.error("Error saving business agreement:", error);
-        alert("Error: " + error.message);
-    }
-}
-
-async function loadBusinessExternalFinanceAgreements() {
-    if (isLoadingBusinessAgreements) return businessAgreementsCache;
-    isLoadingBusinessAgreements = true;
-    const tableBody = document.getElementById(
-        "businessExternalFinanceTableBody",
-    );
-    if(!tableBody) {isLoadingBusinessAgreements = false; return []; }
-    tableBody.innerHTML =
-        '<tr><td colspan="8" style="text-align:center;">Loading business agreements...</td></tr>'; 
-    try {
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions)
-            await loadAllTransactions(); 
-        const agreementsRes = await fetch(`${API}/business-agreements`);
-        if (!agreementsRes.ok) {
-            const errTxt = await agreementsRes
-                .text()
-                .catch(() => "Failed to read error");
-            throw new Error(
-                `Agreements fetch failed: ${agreementsRes.status} ${errTxt}`,
-            );
-        }
-        const data = await agreementsRes.json();
-        businessAgreementsCache = Array.isArray(data) ? data : [];
-        displayBusinessExternalFinanceAgreements();
-        return businessAgreementsCache;
-    } catch (error) {
-        console.error("Error loading business agreements:", error);
-        businessAgreementsCache = [];
-        if(tableBody)
-            tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center;">Error: ${error.message}</td></tr>`;
-        return [];
-    } finally {
-        isLoadingBusinessAgreements = false;
-    }
-}
-
-function displayBusinessExternalFinanceAgreements() {
-    const tableBody = document.getElementById(
-        "businessExternalFinanceTableBody",
-    );
-    if(!tableBody) return;
-    tableBody.innerHTML = "";
-
-    if (
-        !Array.isArray(businessAgreementsCache) ||
-        businessAgreementsCache.length === 0
-    ) {
-        tableBody.innerHTML =
-            '<tr><td colspan="8" style="text-align:center;">No agreements found.</td></tr>'; 
-        return;
-    }
-    businessAgreementsCache.forEach((agreement) => {
-        const relatedTransactions = allTransactionsCache.filter(tx => tx.agreement_id === agreement.agreement_id);
-
-        let amountPaidOrReceivedByBiz = 0; 
-        let netBalanceToSettle = parseFloat(agreement.total_amount) || 0;
-
-        // Use pre-calculated values from backend
-        let interestPayableForDisplay = (agreement.interest_payable !== undefined && agreement.interest_payable !== null) 
-            ? parseFloat(agreement.interest_payable).toFixed(2) 
-            : "N/A";
-        if (agreement.agreement_type !== 'loan_taken_by_biz') {
-             interestPayableForDisplay = "N/A";
-        }
-        
-        amountPaidOrReceivedByBiz = agreement.calculated_principal_paid || 0; // This comes from backend now
-        
-        if (agreement.agreement_type === 'loan_taken_by_biz') {
-            netBalanceToSettle = (parseFloat(agreement.total_amount) || 0) - amountPaidOrReceivedByBiz;
-        } else if (agreement.agreement_type === 'loan_given_by_biz') {
-            // For loan given, net balance is principal owed TO the business + interest receivable
-            // The backend should provide calculated_principal_received_by_biz and interest_receivable
-            amountPaidOrReceivedByBiz = agreement.calculated_principal_received_by_biz || 0;
-            let interestReceivableForDisplay = parseFloat(agreement.interest_receivable || 0); // Assuming backend sends this
-            let principalOwedToBiz = (parseFloat(agreement.total_amount) || 0) - amountPaidOrReceivedByBiz;
-            netBalanceToSettle = principalOwedToBiz + interestReceivableForDisplay;
-            interestPayableForDisplay = (interestReceivableForDisplay > 0) ? interestReceivableForDisplay.toFixed(2) + " (Receivable)" : "N/A";
-        } else if (agreement.agreement_type === 'chit_participation') {
-            let totalInstallmentsPaidByBiz = 0;
-            let totalPayoutReceivedByBiz = 0;
-            relatedTransactions.forEach(tx => {
-                 const catInfo = transactionCategories.find(c => c.name === tx.category);
-                 const amount = parseFloat(tx.amount);
-                 if (catInfo && catInfo.name.startsWith("Business Pays Chit Installment") && amount < 0) { 
-                     totalInstallmentsPaidByBiz -= amount;
-                 } else if (catInfo && catInfo.name.startsWith("Business Receives Chit Payout") && amount > 0) { 
-                     totalPayoutReceivedByBiz += amount;
-                 }
-            });
-            amountPaidOrReceivedByBiz = totalInstallmentsPaidByBiz; 
-            if (totalPayoutReceivedByBiz > 0) {
-                netBalanceToSettle = totalPayoutReceivedByBiz - totalInstallmentsPaidByBiz;
-            } else {
-                netBalanceToSettle = (parseFloat(agreement.total_amount) || 0) - totalInstallmentsPaidByBiz;
-            }
-            interestPayableForDisplay = "N/A"; 
-        }
-
-
-        const row = tableBody.insertRow();
-        row.insertCell().textContent = agreement.lender_name;
-        row.insertCell().textContent = agreement.agreement_type
-            .replace(/_/g, " ")
-            .replace(/\b\w/g, (l) => l.toUpperCase());
-        row.insertCell().textContent = (parseFloat(agreement.total_amount) || 0).toFixed(2);
-        row.insertCell().textContent = (parseFloat(agreement.interest_rate) || 0).toFixed(2) + "%"; 
-        
-        const interestPayableCell = row.insertCell();
-        interestPayableCell.textContent = interestPayableForDisplay;
-        interestPayableCell.className = (parseFloat(interestPayableForDisplay) > 0 && agreement.agreement_type === 'loan_taken_by_biz') ? "negative-balance num" : "num";
-
-
-        const paidReceivedCell = row.insertCell();
-        paidReceivedCell.textContent = amountPaidOrReceivedByBiz.toFixed(2);
-         if(agreement.agreement_type === 'loan_taken_by_biz' || (agreement.agreement_type === 'chit_participation' && amountPaidOrReceivedByBiz > 0) ) {
-            paidReceivedCell.className = "negative num"; 
-        } else if (agreement.agreement_type === 'loan_given_by_biz') { // If biz received principal back
-             paidReceivedCell.className = amountPaidOrReceivedByBiz > 0 ? "positive num" : "num"; 
-        } else if (agreement.agreement_type === 'chit_participation' && netBalanceToSettle > 0 && totalPayoutReceivedByBiz > 0) { // Net profit from chit
-             paidReceivedCell.className = "positive num"; // Actually represents net gain for biz
-        } else {
-            paidReceivedCell.className = "num";
-        }
-
-
-        const balanceCell = row.insertCell();
-        balanceCell.textContent = netBalanceToSettle.toFixed(2);
-        if(agreement.agreement_type === 'loan_taken_by_biz') { 
-            balanceCell.className = netBalanceToSettle > 0 ? "negative-balance num" : netBalanceToSettle <= 0 ? "positive-balance num" : "num";
-        } else if(agreement.agreement_type === 'loan_given_by_biz') { 
-             balanceCell.className = netBalanceToSettle > 0 ? "positive-balance num" : netBalanceToSettle <= 0 ? "negative-balance num" : "num";
-        } else if (agreement.agreement_type === 'chit_participation') { 
-            balanceCell.className = netBalanceToSettle >= 0 ? "positive-balance num" : "negative-balance num";
-        } else {
-            balanceCell.className = "num";
-        }
-        row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="viewAgreementTransactions(${agreement.agreement_id}, '${agreement.lender_name.replace(/'/g, "\\'")}')"><i class="fas fa-list-alt"></i></button> <button class="btn btn-sm btn-primary" onclick="openCreateBusinessChitLoanAgreementModal(${JSON.stringify(agreement)})"><i class="fas fa-edit"></i></button> <button class="btn btn-sm btn-danger" onclick="deleteBusinessAgreement(${agreement.agreement_id})"><i class="fas fa-trash"></i></button>`;
-    });
-
-    if (tableBody.rows.length === 0 && businessAgreementsCache.length > 0) {
-        tableBody.innerHTML =
-            '<tr><td colspan="8" style="text-align:center;">No transactions matched agreements.</td></tr>';
-    }
-
-    // Ensure table header is correct
-    const tableHeader = document.querySelector("#businessExternalFinanceTable thead tr");
-    if (tableHeader && tableHeader.cells.length !== 8) { 
-        tableHeader.innerHTML = `<th>Provider/Entity Name</th><th>Type</th><th class="num">Total Amt (₹)</th><th>Interest Rate (%)</th><th class="num">Interest Payable (₹)</th><th class="num">Net Paid/Received (₹)</th><th class="num">Net Balance (₹)</th><th>Actions</th>`;
-    }
-}
-
-async function deleteBusinessAgreement(agreementId) {
-    if (
-        !confirm(
-            "Are you sure you want to delete this business agreement? This will not delete associated transactions.",
-        )
-    )
-        return;
-    try {
-        const res = await fetch(`${API}/business-agreements/${agreementId}`, {
-            method: "DELETE",
-        });
-        const result = await res.json();
-        if (!res.ok)
-            throw new Error(
-                result.error || `Failed to delete: ${res.statusText}`,
-            );
-        alert(result.message || "Business agreement deleted");
-        loadBusinessExternalFinanceAgreements();
-    } catch (error) {
-        console.error("Error deleting agreement:", error);
-        alert("Error: " + error.message);
-    }
-}
-
-function openTransactionModalForBusinessExternal() {
-    openTransactionModal(null, null, true);
-}
-
-
-let currentViewingUserId = null;
-let currentViewingUserName = null;
-function openUserTransactionHistoryModal(
-    userId,
-    userName,
-    initialFilter = 'all',
-) {
-    currentViewingUserId = userId;
-    currentViewingUserName = userName;
-    const modal = document.getElementById("userTransactionHistoryModal");
-    const title = document.getElementById("userTransactionHistoryModalTitle");
-    const filterDropdown = document.getElementById(
-        "userTxHistoryCategoryFilter",
-    );
-    title.textContent = `Transaction History for ${userName}`;
-    filterDropdown.value = initialFilter;
-    filterDropdown.dataset.userId = userId;
-    filterDropdown.dataset.userName = userName;
-    loadUserTransactionHistory(userId, userName, initialFilter);
-    modal.style.display = "block";
-}
-function closeUserTransactionHistoryModal() {
-    const modal = document.getElementById("userTransactionHistoryModal");
-    if (modal) {
-        modal.style.display = "none";
-    }
-    currentViewingUserId = null;
-    currentViewingUserName = null;
-}
-async function loadUserTransactionHistory(
-    userId,
-    userName,
-    categoryGroupFilter = 'all',
-) {
-    const tableBody = document.getElementById(
-        "userTransactionHistoryTableBody",
-    );
-    if(!tableBody) return;
-    tableBody.innerHTML =
-        '<tr><td colspan="4" style="text-align:center;">Loading history...</td></tr>';
-    try {
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions)
-            await loadAllTransactions();
-        let userTransactions = allTransactionsCache.filter(
-            (tx) => tx.user_id === userId,
-        );
-        if (categoryGroupFilter !== 'all') {
-            userTransactions = userTransactions.filter(tx => {
-                const categoryInfo = transactionCategories.find(cat => cat.name === tx.category); // Use detailed categories
-                if(!categoryInfo || !categoryInfo.group) return false;
-
-                if(categoryGroupFilter === "customer_loan") return categoryInfo.group === "customer_loan_out" || categoryInfo.group === "customer_loan_in";
-                else if(categoryGroupFilter === "customer_chit") return categoryInfo.group === "customer_chit_in" || categoryInfo.group === "customer_chit_out";
-                else if(categoryGroupFilter === "customer_revenue") return categoryInfo.group === "customer_revenue" || categoryInfo.group === "customer_service"; 
-                return categoryInfo.group === categoryGroupFilter;
-            });
-        }
-        userTransactions.sort(
-            (a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id,
-        );
-        tableBody.innerHTML = "";
-        if (userTransactions.length === 0) {
-            tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No transactions found for ${userName} with selected filter.</td></tr>`;
-            return;
-        }
-        userTransactions.forEach((tx) => {
-            const row = tableBody.insertRow();
-            row.insertCell().textContent = new Date(
-                tx.date,
-            ).toLocaleDateString();
-            row.insertCell().textContent = tx.category || "-";
-            row.insertCell().textContent = tx.description || "-";
-            const amountCell = row.insertCell();
-            amountCell.textContent = tx.amount.toFixed(2);
-            amountCell.className = tx.amount >= 0 ? "positive" : "negative";
-        });
-    } catch (error) {
-        console.error(
-            `Error loading transaction history for user ${userId}:`,
-            error,
-        );
-        if(tableBody)
-            tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;">Error: ${error.message}</td></tr>`;
-    }
-}
-
-function viewBusinessExternalTransactions(entityName, entityType, entityId){
-    alert(`Viewing transactions for ${entityType}: ${entityName} (ID: ${entityId}). (Modal/detailed view to be implemented)\nThis currently relies on matching the lender_id in transactions.`);
-    const entityTxns = allTransactionsCache.filter(tx => tx.lender_id === entityId);
-    console.log(`Filtered transactions for ${entityType} ${entityName}:`, entityTxns);
-}
-function viewAgreementTransactions(agreementId, lenderName){
-     alert(`Viewing transactions for agreement with ${lenderName} (ID: ${agreementId}). (Modal/detailed view to be implemented)\nThis currently relies on matching the agreement_id in transactions.`);
-    const agreementTxns = allTransactionsCache.filter(tx => tx.agreement_id === agreementId);
-    console.log("Filtered transactions for agreement:", agreementId, agreementTxns);
-}
-// --- START OF SCRIPT.JS CHUNK 6 (NEW - General Transaction Modal Logic) ---
-// --- GENERAL TRANSACTION MODAL ---
 function toggleTxPartyDropdowns() {
     const userDropdown = document.getElementById("transaction_user_id");
     const lenderDropdown = document.getElementById("transaction_lender_id");
@@ -4152,7 +1469,6 @@ function toggleTxPartyDropdowns() {
     }
 }
 
-
 async function openTransactionModal(
     tx = null,
     preselectUserId = null,
@@ -4177,7 +1493,6 @@ async function openTransactionModal(
         "transactionLineItemsSection",
     );
     const lineItemsTableBody = document.getElementById("txLineItemsTableBody");
-    // const initialPaymentGroup = document.getElementById("initialPaymentGroup"); // Potentially deprecated
     const forCustomerRadio = document.getElementById("txPartyTypeCustomer");
     const forLenderRadio = document.getElementById("txPartyTypeLender");
     const paymentModeGroup = document.getElementById("paymentModeGroup");
@@ -4186,7 +1501,7 @@ async function openTransactionModal(
     if (
         !modal || !form || !modalTitleElement || !userDropdown || !lenderDropdown || !agreementDropdown ||
         !amountField || !categoryDropdown || !descriptionField || !dateField ||
-        !lineItemsSection || !lineItemsTableBody /*|| !initialPaymentGroup*/ || !forCustomerRadio || !forLenderRadio || !paymentModeGroup
+        !lineItemsSection || !lineItemsTableBody || !forCustomerRadio || !forLenderRadio || !paymentModeGroup
     ) {
         console.error("One or more elements in transactionModal are missing!"); alert("Error: Transaction modal components not found."); return;
     }
@@ -4195,22 +1510,17 @@ async function openTransactionModal(
     if (lineItemsTableBody) lineItemsTableBody.innerHTML = "";
     updateTxGrandTotal();
 
-    // These should have been loaded by loadInitialData or when their respective sections were visited
-    // Adding a check just in case, but ideally caches are populated.
     if(usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
     if(externalEntitiesCache.length === 0 && !isLoadingLenders) await loadLenders();
     if(businessAgreementsCache.length === 0 && !isLoadingBusinessAgreements) await loadBusinessExternalFinanceAgreements();
     if(productsCache.length === 0 && !isLoadingProducts) await loadProducts();
 
-
-    await populateUserDropdown(); // Ensures dropdown is fresh if users were added/edited
+    await populateUserDropdown();
     await populateLenderDropdownForTxModal();
     await populateAgreementDropdownForTxModal();
-    populateTransactionCategoryDropdown(); // Populates with baseTransactionCategories
+    populateTransactionCategoryDropdown();
 
     const amountLabel = document.querySelector('label[for="amount"]');
-
-    // Detach existing listener before attaching a new one to prevent multiple executions
     const newCategoryDropdown = categoryDropdown.cloneNode(true);
     categoryDropdown.parentNode.replaceChild(newCategoryDropdown, categoryDropdown);
     
@@ -4221,112 +1531,57 @@ async function openTransactionModal(
         
         const isProductInvolved = baseCatInfo && (baseCatInfo.isProductSale || baseCatInfo.isProductPurchase);
 
-        if (lineItemsSection) {
-            lineItemsSection.style.display = isProductInvolved ? "block" : "none";
-            if ( isProductInvolved && lineItemsTableBody && lineItemsTableBody.rows.length === 0 ) {
-                addTxLineItemRow();
-            }
-        }
-        
-        if (paymentModeGroup) {
-             paymentModeGroup.style.display = (baseCatInfo && baseCatInfo.needsPaymentMode) ? 'flex' : 'none';
-        }
-
-        if (amountLabel) {
-            amountLabel.textContent = (baseCatInfo && isProductInvolved) ? "Total Item Amount (₹):" : "Amount (₹):";
-        }
-        if (amountField){
-            amountField.readOnly = !!isProductInvolved; 
-            if(isProductInvolved) updateTxGrandTotal();
-        }
+        if (lineItemsSection) lineItemsSection.style.display = isProductInvolved ? "block" : "none";
+        if (paymentModeGroup) paymentModeGroup.style.display = (baseCatInfo && baseCatInfo.needsPaymentMode) ? 'flex' : 'none';
+        if (amountLabel) amountLabel.textContent = (baseCatInfo && isProductInvolved) ? "Total Item Amount (₹):" : "Amount (₹):";
+        if (amountField) amountField.readOnly = !!isProductInvolved;
+        if (isProductInvolved && lineItemsTableBody && lineItemsTableBody.rows.length === 0) addTxLineItemRow();
+        if(isProductInvolved) updateTxGrandTotal();
 
         if(baseCatInfo && baseCatInfo.relevantTo) {
-            if(baseCatInfo.relevantTo === 'customer') {
-                forCustomerRadio.checked = true;
-            } else if (baseCatInfo.relevantTo === 'lender') {
-                forLenderRadio.checked = true;
-            }
+            if(baseCatInfo.relevantTo === 'customer') forCustomerRadio.checked = true;
+            else if (baseCatInfo.relevantTo === 'lender') forLenderRadio.checked = true;
             toggleTxPartyDropdowns();
-        } else if (!editingTxnId && baseCatInfo) { // Default for new if not explicitly set by category
-             forCustomerRadio.checked = true; // Default to customer if relevantTo is not 'lender'
+        } else if (!editingTxnId && baseCatInfo) {
+             forCustomerRadio.checked = true;
              toggleTxPartyDropdowns();
         }
          
-        if (baseCatInfo && baseCatInfo.needsPaymentMode) {
-            document.getElementById("txPayModeCash").checked = true; // Default to cash when category changes & needs mode
-        } else if (baseCatInfo && !baseCatInfo.needsPaymentMode) {
-             const paymentRadios = document.getElementsByName("txPaymentMode");
-             paymentRadios.forEach(radio => radio.checked = false);
-        }
+        if (baseCatInfo && baseCatInfo.needsPaymentMode) document.getElementById("txPayModeCash").checked = true;
+        else if (baseCatInfo && !baseCatInfo.needsPaymentMode) document.getElementsByName("txPaymentMode").forEach(radio => radio.checked = false);
     };
-
 
     if (tx) { // Editing existing transaction
         editingTxnId = tx.id;
-        const user = usersDataCache.find(u => u.id === parseInt(tx.user_id));
-        modalTitleElement.textContent = `Edit Transaction ${tx.user_id ? `for ${user ? user.username : `Cust. ID ${tx.user_id}`}` : "(Business/External)"}`;
-
+        modalTitleElement.textContent = `Edit Transaction #${tx.id}`;
         userDropdown.value = tx.user_id || "";
         lenderDropdown.value = tx.lender_id || "";
         agreementDropdown.value = tx.agreement_id || "";
-        amountField.value = tx.amount !== undefined ? Math.abs(tx.amount) : ""; 
+        amountField.value = tx.amount !== undefined ? Math.abs(tx.amount) : "";
         descriptionField.value = tx.description || "";
         dateField.value = tx.date ? tx.date.split("T")[0] : new Date().toISOString().split("T")[0];
         
-        if(tx.lender_id) {
-            forLenderRadio.checked = true;
-        } else if (tx.user_id) { 
-             forCustomerRadio.checked = true;
-        } else { 
-            forCustomerRadio.checked = true;
-        }
+        if(tx.lender_id) forLenderRadio.checked = true;
+        else forCustomerRadio.checked = true;
         toggleTxPartyDropdowns();
 
         const originalFullCatFromDB = tx.category;
-        let baseNameToSelect = originalFullCatFromDB; // Fallback
-        let paymentModeToSelect = "On Credit"; 
-        let needsModeForEditDisplay = false;
+        let baseNameToSelect = originalFullCatFromDB, paymentModeToSelect = null, needsModeForEditDisplay = false;
 
-        // Try to find a base category that could generate this full category
         for (const bc of baseTransactionCategories) {
             if (bc.needsPaymentMode) {
-                if (originalFullCatFromDB === bc.categoryPattern.replace("{PaymentMode}", "Cash") || 
-                    originalFullCatFromDB === bc.categoryPattern.replace("{PaymentModeDestination}", "(to Cash)") ||
-                    originalFullCatFromDB === bc.categoryPattern.replace("{PaymentModeSource}", "(from Cash)") ||
-                    originalFullCatFromDB === bc.categoryPattern.replace("{PaymentMode}", "Cash").replace("Refund via Cash", "Cash Refund") // for supplier refund
-                    ) { 
-                    baseNameToSelect = bc.name; paymentModeToSelect = "Cash"; needsModeForEditDisplay = true; break;
-                }
-                if (originalFullCatFromDB === bc.categoryPattern.replace("{PaymentMode}", "Bank") ||
-                    originalFullCatFromDB === bc.categoryPattern.replace("{PaymentModeDestination}", "(to Bank)") ||
-                    originalFullCatFromDB === bc.categoryPattern.replace("{PaymentModeSource}", "(from Bank)") ||
-                    originalFullCatFromDB === bc.categoryPattern.replace("{PaymentMode}", "Bank").replace("Refund via Bank", "Bank Refund")
-                    ) { 
-                    baseNameToSelect = bc.name; paymentModeToSelect = "Bank"; needsModeForEditDisplay = true; break;
-                }
-                 // Check for "On Credit" versions if they were constructed specifically
-                if (originalFullCatFromDB === `${bc.name} (On Credit)` || // General on credit
-                    originalFullCatFromDB === "Sale to Customer (On Credit)" && bc.name === "Sale to Customer" ||
-                    originalFullCatFromDB === "Purchase from Supplier (On Credit)" && bc.name === "Purchase from Supplier"
-                    ) {
-                     baseNameToSelect = bc.name; paymentModeToSelect = "On Credit"; needsModeForEditDisplay = true; break;
-                }
-            } else if (originalFullCatFromDB === bc.categoryPattern) { 
-                baseNameToSelect = bc.name;
-                paymentModeToSelect = null; 
-                needsModeForEditDisplay = false;
-                break;
-            }
+                if (originalFullCatFromDB.includes(bc.name) && originalFullCatFromDB.includes("Cash")) { baseNameToSelect = bc.name; paymentModeToSelect = "Cash"; needsModeForEditDisplay = true; break; }
+                if (originalFullCatFromDB.includes(bc.name) && originalFullCatFromDB.includes("Bank")) { baseNameToSelect = bc.name; paymentModeToSelect = "Bank"; needsModeForEditDisplay = true; break; }
+                if (originalFullCatFromDB.includes(bc.name) && (originalFullCatFromDB.includes("On Credit") || originalFullCatFromDB.includes("Credit Note"))) { baseNameToSelect = bc.name; paymentModeToSelect = "On Credit"; needsModeForEditDisplay = true; break; }
+            } else if (originalFullCatFromDB === bc.categoryPattern) { baseNameToSelect = bc.name; break; }
         }
         
         newCategoryDropdown.value = baseNameToSelect; 
-        
         if(needsModeForEditDisplay){
             paymentModeGroup.style.display = 'flex';
             if (paymentModeToSelect === "Cash") document.getElementById("txPayModeCash").checked = true;
             else if (paymentModeToSelect === "Bank") document.getElementById("txPayModeBank").checked = true;
             else if (paymentModeToSelect === "On Credit") document.getElementById("txPayModeCredit").checked = true;
-            else document.getElementById("txPayModeCash").checked = true; // Default if mode unclear
         } else {
             paymentModeGroup.style.display = 'none';
         }
@@ -4339,15 +1594,14 @@ async function openTransactionModal(
         amountField.value = "";
         newCategoryDropdown.value = ""; 
         descriptionField.value = "";
-        document.getElementById("txPayModeCash").checked = true; 
+        document.getElementById("txPayModeCash").checked = true;
         paymentModeGroup.style.display = 'none'; 
 
         if (isBusinessExternal) {
             modalTitleElement.textContent = "New Business/External Transaction";
             forLenderRadio.checked = true;
             if (preselectLenderId) lenderDropdown.value = preselectLenderId;
-            if (preselectAgreementId)
-                agreementDropdown.value = preselectAgreementId;
+            if (preselectAgreementId) agreementDropdown.value = preselectAgreementId;
         } else if (preselectUserId) {
             const user = usersDataCache.find(u => u.id === preselectUserId);
             modalTitleElement.textContent = `New Transaction for ${user ? user.username : `Customer ID ${preselectUserId}`}`;
@@ -4502,11 +1756,12 @@ async function handleTransactionSubmit(e) {
         const endpoint = method === "PUT" ? `${API}/transactions/${editingTxnId}` : `${API}/transactions`;
         console.log(`Sending ${method} request to ${endpoint}`);
 
-        const res = await fetch(endpoint, {
+        const res = await apiFetch(endpoint, {
             method,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(txData),
         });
+        if(!res) return;
         console.log("Backend Response Status:", res.status);
         const result = await res.json();
         console.log("Backend Response Body:", result);
@@ -4516,13 +1771,15 @@ async function handleTransactionSubmit(e) {
         }
         
         alert(result.message || (editingTxnId ? "Transaction updated" : "Transaction added"));
+        
+        editingTxnId = null;
+        closeTransactionModal();
+        
+        await loadAllTransactions(); 
+        
         if(txData.line_items && txData.line_items.length > 0) { 
             await loadProducts(); 
         }
-
-        editingTxnId = null;
-        closeTransactionModal();
-        await loadAllTransactions(); 
         await loadUsers(); 
 
         const cashLedgerActive = document.getElementById("cashLedgerContent")?.style.display !== 'none';
@@ -4685,9 +1942,10 @@ function updateTxGrandTotal() {
 async function deleteTransaction(id) {
     if (!confirm("Are you sure?")) return;
     try {
-        const res = await fetch(`${API}/transactions/${id}`, {
+        const res = await apiFetch(`${API}/transactions/${id}`, {
             method: "DELETE",
         });
+        if(!res) return;
         const result = await res.json();
         if (!res.ok)
             throw new Error(result.error || `Failed: ${res.statusText}`);
@@ -4728,8 +1986,777 @@ async function deleteTransaction(id) {
         alert(error.message);
     }
 }
-// --- START OF SCRIPT.JS CHUNK 7 (NEW - Product and Supplier Linking) ---
-// --- PRODUCT & PRODUCT-SUPPLIER LOGIC ---
+function toggleInitialPayableField(){
+    const entityTypeDropdown = document.getElementById("lenderEntityType");
+    const initialPayableGroup = document.getElementById("initialPayableGroup");
+    if (entityTypeDropdown && initialPayableGroup) {
+        if(entityTypeDropdown.value === 'Supplier') {
+            initialPayableGroup.style.display = "block";
+        } else {
+            initialPayableGroup.style.display = "none";
+            const initialPayableInput = document.getElementById("lenderInitialPayable");
+            if (initialPayableInput) initialPayableInput.value = 0;
+        }
+    }
+}
+
+
+function openLenderModal(lender = null, entityType = "General") {
+    const modal = document.getElementById("lenderModal");
+    const form = document.getElementById("lenderForm");
+    const title = document.getElementById("lenderModalTitle");
+    const typeDropdown = document.getElementById("lenderEntityType");
+    const initialPayableInput = document.getElementById("lenderInitialPayable");
+    const lenderIdInput = document.getElementById("lenderId");
+
+    if (!modal || !form || !title || !typeDropdown || !initialPayableInput || !lenderIdInput) {
+        console.error("One or more elements in lenderModal are missing from the DOM! Check IDs: lenderModal, lenderForm, lenderModalTitle, lenderEntityType, lenderInitialPayable, lenderId");
+        alert("Error: Lender modal components not found. Please check console.");
+        return;
+    }
+
+    form.reset();
+    editingLenderId = null;
+    lenderIdInput.value = "";
+    typeDropdown.value = entityType;
+    initialPayableInput.value = "0.00";
+
+    if (lender) {
+        editingLenderId = lender.id;
+        title.textContent = `Edit External Entity: ${lender.lender_name}`;
+        lenderIdInput.value = lender.id;
+        document.getElementById("lenderName").value = lender.lender_name || "";
+        typeDropdown.value = lender.entity_type || "General";
+        initialPayableInput.value = (lender.entity_type === 'Supplier' && lender.initial_payable_balance !== undefined) ? parseFloat(lender.initial_payable_balance).toFixed(2) : "0.00";
+        document.getElementById("lenderContactPerson").value =
+            lender.contact_person || "";
+        document.getElementById("lenderPhone").value = lender.phone || "";
+        document.getElementById("lenderEmail").value = lender.email || "";
+        document.getElementById("lenderNotes").value = lender.notes || "";
+    } else {
+        title.textContent = `Add New ${entityType === 'Financial' ? 'Financial Entity' : entityType}`;
+    }
+    toggleInitialPayableField();
+    modal.style.display = "block";
+}
+function closeLenderModal() {
+    const modal = document.getElementById("lenderModal");
+    if (modal) {
+        modal.style.display = "none";
+    }
+    editingLenderId = null;
+    const form = document.getElementById("lenderForm");
+    if(form){form.reset();}
+}
+async function handleLenderSubmit(e) {
+    e.preventDefault();
+    const entityType = document.getElementById("lenderEntityType").value;
+    const initialPayable = (entityType === 'Supplier') ? (parseFloat(document.getElementById("lenderInitialPayable").value) || 0) : 0;
+
+    const data = {
+        lender_name: document.getElementById("lenderName").value.trim(),
+        entity_type: entityType,
+        contact_person: document
+            .getElementById("lenderContactPerson")
+            .value.trim(),
+        phone: document.getElementById("lenderPhone").value.trim(),
+        email: document.getElementById("lenderEmail").value.trim(),
+        notes: document.getElementById("lenderNotes").value.trim(),
+        initial_payable_balance: initialPayable
+    };
+    if (!data.lender_name) {
+        alert("External Entity Name is required.");
+        return;
+    }
+    const method = editingLenderId ? "PUT" : "POST";
+    const endpoint = editingLenderId
+        ? `${API}/external-entities/${editingLenderId}`
+        : `${API}/external-entities`;
+    try {
+        const res = await apiFetch(endpoint, {
+            method,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data),
+        });
+        if(!res) return;
+        const result = await res.json();
+        if (!res.ok)
+            throw new Error(
+                result.error || `Operation failed: ${res.statusText}`,
+            );
+        alert(
+            result.message ||
+                (editingLenderId
+                    ? "External entity updated"
+                    : "External entity created"),
+        );
+        closeLenderModal();
+        await loadLenders(null, true); // Force reload of main externalEntitiesCache
+        if (
+            document.getElementById("supplierManagementSection")?.style
+                .display === 'block'
+        ) {
+            loadSupplierSummaries(); 
+        }
+        if (
+            document.getElementById("businessFinanceSection")?.style.display ===
+            'block'
+        ) {
+            populateAgreementEntityDropdown();
+        }
+        const linkSupplierDropdown = document.getElementById("linkSupplierId");
+        if (linkSupplierDropdown) populateSuppliersForProductLinkModal();
+
+    } catch (error) {
+        console.error("Error saving external entity:", error);
+        alert("Error: " + error.message);
+    }
+} 
+
+async function loadLenders(entityTypeFilter = null, forceReloadAllCache = false) {
+    if(!entityTypeFilter && !isLoadingLenders && externalEntitiesCache.length > 0 && !forceReloadAllCache) return externalEntitiesCache;
+
+
+    let specificLoad = !!entityTypeFilter; 
+    if(!specificLoad || forceReloadAllCache) isLoadingLenders = true; 
+
+    const tableBody = document.getElementById("lendersTableBody");
+
+    if (tableBody && (!specificLoad || forceReloadAllCache) && document.getElementById("businessFinanceSection")?.style.display === 'block')
+        tableBody.innerHTML =
+            '<tr><td colspan="7" style="text-align:center;">Loading external entities...</td></tr>';
+
+    try {
+        const fetchUrl = entityTypeFilter
+            ? `${API}/external-entities?type=${entityTypeFilter}`
+            : `${API}/external-entities`;
+        const res = await apiFetch(fetchUrl);
+        if(!res) return [];
+        if (!res.ok)
+            throw new Error(
+                `Failed to fetch external entities: ${res.statusText} ${await res.text()}`,
+            );
+        const data = await res.json();
+
+        const entitiesToDisplay = Array.isArray(data) ? data : [];
+        
+        if(!specificLoad || forceReloadAllCache) { 
+            externalEntitiesCache = entitiesToDisplay; 
+        }
+
+        if (tableBody && (!specificLoad || forceReloadAllCache) && document.getElementById("businessFinanceSection")?.style.display === 'block') {
+            tableBody.innerHTML = "";
+            const generalLenders = externalEntitiesCache.filter(e => e.entity_type !== 'Supplier');
+            if (generalLenders.length === 0) {
+                tableBody.innerHTML =
+                    '<tr><td colspan="7" style="text-align:center;">No general external entities found.</td></tr>';
+            } else {
+                generalLenders.forEach((entity) => {
+                    const row = tableBody.insertRow();
+                    row.insertCell().textContent = entity.id;
+                    row.insertCell().textContent = entity.lender_name;
+                    row.insertCell().textContent =
+                        entity.entity_type || 'General';
+                    row.insertCell().textContent = entity.contact_person || "-";
+                    row.insertCell().textContent = entity.phone || "-";
+                    row.insertCell().textContent = entity.notes || "-";
+                    const actionsCell = row.insertCell();
+                    actionsCell.innerHTML = `<button class='btn btn-primary btn-sm' onclick='openLenderModal(${JSON.stringify(entity)}, "${entity.entity_type}")'><i class="fas fa-edit"></i></button> <button class='btn btn-danger btn-sm' onclick='deleteLender(${entity.id})'><i class="fas fa-trash"></i></button>`;
+                });
+            }
+        }
+        if (!specificLoad || forceReloadAllCache) updateDashboardCards(); 
+        return entitiesToDisplay; 
+    } catch (error) {
+        console.error("Error loading external entities:", error);
+        if(tableBody && (!specificLoad || forceReloadAllCache))
+            tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Error: ${error.message}</td></tr>`;
+        if(!specificLoad || forceReloadAllCache) externalEntitiesCache = [];
+        return [];
+    } finally {
+        if(!specificLoad || forceReloadAllCache) isLoadingLenders = false;
+    }
+}
+
+async function deleteLender(id) {
+    if (
+        !confirm(
+            "Are you sure you want to delete this external entity? This may affect product-supplier links and business agreements.",
+        )
+    )
+        return;
+    try {
+        const res = await apiFetch(`${API}/external-entities/${id}`, {
+            method: "DELETE",
+        });
+        if(!res) return;
+        const result = await res.json();
+        if (!res.ok)
+            throw new Error(
+                result.error || `Failed to delete: ${res.statusText}`,
+            );
+        alert(result.message || "External entity deleted");
+        await loadLenders(null, true); 
+        if (
+            document.getElementById("supplierManagementSection")?.style
+                .display === 'block'
+        ) {
+            loadSupplierSummaries(); 
+        }
+        if (
+            document.getElementById("businessFinanceSection")?.style.display ===
+            'block'
+        ) {
+            populateAgreementEntityDropdown(); 
+            loadBusinessExternalFinanceAgreements();
+        }
+        const linkSupplierDropdown = document.getElementById("linkSupplierId");
+        if(linkSupplierDropdown && document.getElementById("productSupplierLinkModal").style.display === 'block') {
+             populateSuppliersForProductLinkModal(); 
+        }
+        if(document.getElementById("inventoryManagementSection")?.style.display === 'block') {
+            loadProducts(); 
+        }
+
+    } catch (error) {
+        console.error("Error deleting external entity:", error);
+        alert("Error: " + error.message);
+    }
+}
+// In script.js
+
+// Replace the existing loadCustomerSummaries function with this corrected version
+// In script.js
+
+// Replace the existing loadCustomerSummaries function with this one
+async function loadCustomerSummaries() {
+    const customerTableBody = document.getElementById("customerTableBody");
+    if (!customerTableBody) return;
+    customerTableBody.innerHTML =
+        '<tr><td colspan="8" style="text-align:center;">Loading customer data...</td></tr>';
+    try {
+        if (usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
+        if (allTransactionsCache.length === 0 && !isLoadingTransactions)
+            await loadAllTransactions();
+        customerTableBody.innerHTML = "";
+        
+        const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
+
+        if (!Array.isArray(customersOnly) || customersOnly.length === 0) {
+            customerTableBody.innerHTML =
+                '<tr><td colspan="8" style="text-align:center;">No customers found.</td></tr>';
+            return;
+        }
+
+        // --- START OF KEY CHANGES ---
+        // 1. Initialize a counter for the serial number
+        let serialNumber = 1;
+
+        // 2. Iterate over the filtered 'customersOnly' array
+        customersOnly.forEach((user) => {
+            // ... (all the calculation logic for receivable, loan, etc. remains the same)
+            let receivable = parseFloat(user.initial_balance) || 0;
+            let loanOutstanding = 0;
+            let chitNetPosition = 0;
+
+            allTransactionsCache
+                .filter((tx) => tx.user_id === user.id)
+                .forEach((tx) => {
+                    const categoryInfo = transactionCategories.find(
+                        (cat) => cat.name === tx.category,
+                    );
+                    if (categoryInfo) {
+                        const amount = parseFloat(tx.amount);
+                        if (categoryInfo.group === "customer_revenue") receivable += Math.abs(amount); 
+                        else if (categoryInfo.group === "customer_payment") receivable -= Math.abs(amount); 
+                        else if (categoryInfo.name === "Product Return from Customer (Credit Note)") receivable -= Math.abs(amount); 
+                        else if (categoryInfo.name.startsWith("Product Return from Customer (Refund via")) receivable -= Math.abs(amount);
+                        if (categoryInfo.group === "customer_loan_out") loanOutstanding += amount;
+                        else if (categoryInfo.group === "customer_loan_in") loanOutstanding += amount;
+                        else if (categoryInfo.group === "customer_chit_in") chitNetPosition -= amount;
+                        else if (categoryInfo.group === "customer_chit_out") chitNetPosition -= amount;
+                    }
+                });
+
+            const row = customerTableBody.insertRow();
+            
+            // 3. Display the serial number instead of the database ID
+            row.insertCell().textContent = serialNumber++; // Display and then increment the counter
+
+            // The rest of the row population remains the same
+            row.insertCell().textContent = user.username;
+            row.insertCell().textContent = (parseFloat(user.initial_balance) || 0).toFixed(2);
+            
+            const receivableCell = row.insertCell();
+            receivableCell.textContent = receivable.toFixed(2);
+            receivableCell.className = receivable > 0 ? "negative-balance" : receivable < 0 ? "positive-balance" : "";
+            
+            const loanCell = row.insertCell();
+            loanCell.textContent = loanOutstanding.toFixed(2);
+            loanCell.className = loanOutstanding > 0 ? "negative-balance" : "";
+            
+            const chitCell = row.insertCell();
+            chitCell.textContent = chitNetPosition.toFixed(2);
+            chitCell.className = chitNetPosition >= 0 ? "positive-balance" : "negative-balance";
+            
+            row.insertCell().textContent = new Date(user.created_at).toLocaleDateString();
+            row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="openUserTransactionHistoryModal(${user.id}, '${user.username.replace(/'/g, "\\'")}')"><i class="fas fa-history"></i></button> <button class='btn btn-primary btn-sm' onclick='openUserModal(${JSON.stringify(user)})'><i class="fas fa-edit"></i></button> <button class='btn btn-danger btn-sm' onclick='deleteUser(${user.id})'><i class="fas fa-trash"></i></button>`;
+        });
+        // --- END OF KEY CHANGES ---
+
+        if (customerTableBody.rows.length === 0 && customersOnly.length > 0)
+            customerTableBody.innerHTML =
+                '<tr><td colspan="8" style="text-align:center;">No financial activity for listed customers.</td></tr>';
+    } catch (error) {
+        console.error("Error loading customer summaries:", error);
+        if(customerTableBody)
+            customerTableBody.innerHTML = `<tr><td colspan="8" style="text-align:center;">Error: ${error.message}</td></tr>`;
+    }
+}
+async function loadSupplierSummaries() {
+    const supplierTableBody = document.getElementById("supplierTableBody");
+    if(!supplierTableBody) return;
+    supplierTableBody.innerHTML =
+        '<tr><td colspan="6" style="text-align:center;">Loading supplier data...</td></tr>';
+    try {
+        const suppliers = await loadLenders("Supplier", true); // Force refresh for suppliers
+
+        supplierTableBody.innerHTML = "";
+        if (!Array.isArray(suppliers) || suppliers.length === 0) {
+            supplierTableBody.innerHTML =
+                '<tr><td colspan="6" style="text-align:center;">No suppliers found. Add them via "+ Add Supplier" button.</td></tr>';
+            return;
+        }
+
+        suppliers.forEach((supplier) => {
+            const row = supplierTableBody.insertRow();
+            row.insertCell().textContent = supplier.id;
+            row.insertCell().textContent = supplier.lender_name;
+            row.insertCell().textContent = supplier.contact_person || "-";
+            
+            const payableCell = row.insertCell();
+            const currentPayable = parseFloat(supplier.current_payable || 0); 
+            payableCell.textContent = currentPayable.toFixed(2);
+            payableCell.className =
+                currentPayable > 0 
+                    ? "negative-balance" 
+                    : currentPayable < 0 
+                      ? "positive-balance"
+                      : "";
+
+            row.insertCell().textContent = supplier.notes || "-";
+            row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="viewBusinessExternalTransactions('${supplier.lender_name.replace(/'/g, "\\'")}', 'Supplier', ${supplier.id})"><i class="fas fa-list-alt"></i></button> <button class='btn btn-primary btn-sm' onclick='openLenderModal(${JSON.stringify(supplier)}, "Supplier")'><i class="fas fa-edit"></i></button>`;
+        });
+
+        if (supplierTableBody.rows.length === 0 && suppliers.length > 0) {
+            supplierTableBody.innerHTML =
+                '<tr><td colspan="6" style="text-align:center;">No financial activity or payable info for listed suppliers.</td></tr>';
+        } else if (
+            supplierTableBody.rows.length === 0 &&
+            suppliers.length === 0
+        ) {
+             supplierTableBody.innerHTML =
+                '<tr><td colspan="6" style="text-align:center;">No suppliers found.</td></tr>';
+        }
+    } catch (error) {
+        console.error("Error loading supplier summaries:", error);
+        if(supplierTableBody)
+            supplierTableBody.innerHTML = `<tr><td colspan="6" style="text-align:center;">Error: ${error.message}</td></tr>`;
+    }
+}
+async function populateAgreementEntityDropdown() {
+    const dropdown = document.getElementById("agreement_entity_id");
+    if (!dropdown) return;
+    try {
+        let entitiesToUse = externalEntitiesCache;
+        if(!Array.isArray(entitiesToUse) || (entitiesToUse.length === 0 && !isLoadingLenders)) {
+            entitiesToUse = await loadLenders(null, true); // Force reload of all external entities if not already cached
+        }
+        dropdown.innerHTML =
+            '<option value="">Select External Entity...</option>';
+        if(Array.isArray(entitiesToUse)) {
+            entitiesToUse.forEach((entity) => {
+                const option = document.createElement("option");
+                option.value = entity.id;
+                option.textContent = `${entity.lender_name} (${entity.entity_type || 'General'})`;
+                dropdown.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error(error);
+        if(dropdown)
+            dropdown.innerHTML =
+                '<option value="">Error loading entities</option>';
+    }
+}
+function openCreateBusinessChitLoanAgreementModal(agreementId = null) { // Changed to accept ID or null
+    const modal = document.getElementById("businessChitLoanAgreementModal");
+    const form = document.getElementById("businessChitLoanAgreementForm");
+    const title = document.getElementById(
+        "businessChitLoanAgreementModalTitle",
+    );
+    form.reset();
+    editingAgreementId = null;
+    document.getElementById("agreementId").value = "";
+    document.getElementById("agreement_interest_rate").value = "";
+
+    // --- FIX: Find agreement from cache using ID ---
+    const agreement = agreementId ? businessAgreementsCache.find(a => a.agreement_id === agreementId) : null;
+    
+    populateAgreementEntityDropdown().then(() => {
+        if (agreement) {
+            editingAgreementId = agreement.agreement_id;
+            title.textContent = "Edit Business Finance Agreement";
+            document.getElementById("agreementId").value = editingAgreementId;
+            document.getElementById("agreement_entity_id").value =
+                agreement.lender_id;
+            document.getElementById("agreement_type").value =
+                agreement.agreement_type;
+            document.getElementById("agreement_total_amount").value =
+                agreement.total_amount;
+            document.getElementById("agreement_interest_rate").value = (agreement.interest_rate !== undefined && agreement.interest_rate !== null) ? agreement.interest_rate : "0";
+            document.getElementById("agreement_start_date").value =
+                agreement.start_date.split("T")[0];
+            document.getElementById("agreement_details").value =
+                agreement.details || "";
+        } else {
+            editingAgreementId = null; // Ensure it's null for new agreements
+            title.textContent = "New Business Finance Agreement";
+            document.getElementById("agreement_start_date").value = new Date()
+                .toISOString()
+                .split("T")[0];
+            document.getElementById("agreement_interest_rate").value = "0";
+        }
+    });
+    modal.style.display = "block";
+}
+
+function closeBusinessChitLoanAgreementModal() {
+    const modal = document.getElementById("businessChitLoanAgreementModal");
+    if (modal) {
+        modal.style.display = "none";
+    }
+    editingAgreementId = null;
+    const form = document.getElementById("businessChitLoanAgreementForm");
+    if(form){form.reset();}
+}
+
+async function handleBusinessChitLoanAgreementSubmit(e) {
+    e.preventDefault();
+    const data = {
+        lender_id: document.getElementById("agreement_entity_id").value,
+        agreement_type: document.getElementById("agreement_type").value,
+        total_amount: parseFloat(
+            document.getElementById("agreement_total_amount").value,
+        ),
+        interest_rate: parseFloat(document.getElementById("agreement_interest_rate").value) || 0, 
+        start_date: document.getElementById("agreement_start_date").value,
+        details: document.getElementById("agreement_details").value.trim(),
+    };
+    if (
+        !data.lender_id ||
+        !data.agreement_type ||
+        isNaN(data.total_amount) ||
+        !data.start_date
+    ) {
+        alert(
+            "Please fill all required fields: Entity, Type, Total Amount, and Start Date.",
+        );
+        return;
+    }
+     if (isNaN(data.interest_rate) || data.interest_rate < 0) { 
+        alert("Interest Rate must be a valid non-negative number.");
+        return;
+    }
+    const method = editingAgreementId ? "PUT" : "POST";
+    const endpoint = editingAgreementId
+        ? `${API}/business-agreements/${editingAgreementId}`
+        : `${API}/business-agreements`;
+    try {
+        const res = await apiFetch(endpoint, {
+            method,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data),
+        });
+        if(!res) return;
+        const result = await res.json();
+        if (!res.ok)
+            throw new Error(
+                result.error || `Operation failed: ${res.statusText}`,
+            );
+        alert(
+            result.message ||
+                (editingAgreementId
+                    ? "Agreement updated"
+                    : "Agreement created"),
+        );
+        closeBusinessChitLoanAgreementModal();
+        loadBusinessExternalFinanceAgreements(); 
+    } catch (error) {
+        console.error("Error saving business agreement:", error);
+        alert("Error: " + error.message);
+    }
+}
+
+async function loadBusinessExternalFinanceAgreements() {
+    if (isLoadingBusinessAgreements) return businessAgreementsCache;
+    isLoadingBusinessAgreements = true;
+
+    const tableBody = document.getElementById("businessExternalFinanceTableBody");
+    if (!tableBody) {
+        isLoadingBusinessAgreements = false;
+        return [];
+    }
+    
+    tableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;">Loading business agreements...</td></tr>';
+
+    try {
+        if (allTransactionsCache.length === 0 && !isLoadingTransactions) {
+            console.log("[loadBusinessExternalFinanceAgreements] Transaction cache empty, fetching now...");
+            await loadAllTransactions();
+        }
+
+        const agreementsRes = await apiFetch(`${API}/business-agreements`);
+        if (!agreementsRes || !agreementsRes.ok) {
+            const errTxt = await agreementsRes.text().catch(() => "Failed to read error");
+            throw new Error(`Agreements fetch failed: ${agreementsRes.status} ${errTxt}`);
+        }
+        
+        const data = await agreementsRes.json();
+        businessAgreementsCache = Array.isArray(data) ? data : [];
+        
+        displayBusinessExternalFinanceAgreements();
+        
+        return businessAgreementsCache;
+
+    } catch (error) {
+        console.error("Error loading business agreements:", error);
+        businessAgreementsCache = [];
+        if (tableBody) {
+            tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center;">Error: ${error.message}</td></tr>`;
+        }
+        return [];
+    } finally {
+        isLoadingBusinessAgreements = false;
+    }
+}
+
+function displayBusinessExternalFinanceAgreements() {
+    const tableBody = document.getElementById("businessExternalFinanceTableBody");
+    if (!tableBody) return;
+    tableBody.innerHTML = "";
+
+    if (!Array.isArray(businessAgreementsCache) || businessAgreementsCache.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;">No agreements found.</td></tr>';
+        return;
+    }
+    businessAgreementsCache.forEach((agreement) => {
+        const row = tableBody.insertRow();
+        row.insertCell().textContent = agreement.lender_name;
+        row.insertCell().textContent = agreement.agreement_type.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+        row.insertCell().textContent = (parseFloat(agreement.total_amount) || 0).toFixed(2);
+        
+        const monthlyRate = parseFloat(agreement.interest_rate) || 0;
+        row.insertCell().textContent = monthlyRate.toFixed(2) + "%";
+        
+        const interestPayableCell = row.insertCell();
+        const interest_payable = agreement.interest_payable !== undefined ? parseFloat(agreement.interest_payable) : NaN;
+        interestPayableCell.textContent = !isNaN(interest_payable) ? interest_payable.toFixed(2) : "N/A";
+        const isAsset = agreement.agreement_type === 'loan_given_by_biz';
+        interestPayableCell.className = (interest_payable > 0 && !isAsset) ? "negative-balance num" : ((interest_payable > 0 && isAsset) ? "positive-balance num" : "num");
+
+
+        const paidCell = row.insertCell();
+        const total_paid = parseFloat(agreement.calculated_principal_paid || 0) + parseFloat(agreement.calculated_interest_paid || 0);
+        paidCell.textContent = total_paid.toFixed(2);
+        paidCell.className = "num";
+
+        const balanceCell = row.insertCell();
+        const netBalance = parseFloat(agreement.outstanding_principal || 0);
+        balanceCell.textContent = netBalance.toFixed(2);
+        balanceCell.className = netBalance > 0 ? "negative-balance num" : "positive-balance num";
+        
+        const actionsCell = row.insertCell();
+
+        const breakdownBtn = document.createElement('button');
+        breakdownBtn.className = 'btn btn-sm btn-secondary';
+        breakdownBtn.title = 'View Breakdown';
+        breakdownBtn.innerHTML = '<i class="fas fa-list-ul"></i>';
+        breakdownBtn.onclick = () => openLoanDetailsModal(agreement.agreement_id);
+        actionsCell.appendChild(breakdownBtn);
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn btn-sm btn-primary';
+        editBtn.title = 'Edit Agreement';
+        editBtn.innerHTML = '<i class="fas fa-edit"></i>';
+        editBtn.onclick = () => openCreateBusinessChitLoanAgreementModal(agreement.agreement_id);
+        actionsCell.appendChild(editBtn);
+
+        if (agreement.agreement_type === 'loan_taken_by_biz' || agreement.agreement_type === 'loan_given_by_biz') {
+             const buttonText = agreement.agreement_type === 'loan_taken_by_biz' ? 'Repay' : 'Receive Pmt';
+             const buttonIcon = agreement.agreement_type === 'loan_taken_by_biz' ? 'fa-money-bill-wave' : 'fa-hand-holding-usd';
+             const repayBtn = document.createElement('button');
+             repayBtn.className = 'btn btn-sm btn-success';
+             repayBtn.title = buttonText;
+             repayBtn.innerHTML = `<i class="fas ${buttonIcon}"></i> ${buttonText}`;
+             repayBtn.onclick = () => openRepayLoanModal(agreement.agreement_id);
+             actionsCell.appendChild(repayBtn);
+        } else {
+             const addTxBtn = document.createElement('button');
+             addTxBtn.className = 'btn btn-sm btn-success';
+             addTxBtn.title = 'Add Transaction for this Agreement';
+             addTxBtn.innerHTML = '<i class="fas fa-plus"></i>';
+             addTxBtn.onclick = () => openTransactionModal(null, null, true, agreement.lender_id, agreement.agreement_id);
+             actionsCell.appendChild(addTxBtn);
+        }
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn btn-sm btn-danger';
+        deleteBtn.title = 'Delete Agreement';
+        deleteBtn.innerHTML = '<i class="fas fa-trash"></i>';
+        deleteBtn.onclick = () => deleteBusinessAgreement(agreement.agreement_id);
+        actionsCell.appendChild(deleteBtn);
+    });
+
+    if (tableBody.rows.length === 0 && businessAgreementsCache.length > 0) {
+        tableBody.innerHTML =
+            '<tr><td colspan="8" style="text-align:center;">No transactions matched agreements.</td></tr>';
+    }
+
+    const tableHeader = document.querySelector("#businessExternalFinanceTable thead tr");
+    if (tableHeader) { 
+        tableHeader.innerHTML = `<th>Provider/Entity Name</th><th>Type</th><th class="num">Principal (₹)</th><th>Interest Rate (% p.m.)</th><th class="num">Interest Payable (₹)</th><th class="num">Total Paid (₹)</th><th class="num">Principal Balance (₹)</th><th>Actions</th>`;
+    }
+}
+async function deleteBusinessAgreement(agreementId) {
+    if (
+        !confirm(
+            "Are you sure you want to delete this business agreement? This will not delete associated transactions.",
+        )
+    )
+        return;
+    try {
+        const res = await apiFetch(`${API}/business-agreements/${agreementId}`, {
+            method: "DELETE",
+        });
+        if(!res) return;
+        const result = await res.json();
+        if (!res.ok)
+            throw new Error(
+                result.error || `Failed to delete: ${res.statusText}`,
+            );
+        alert(result.message || "Business agreement deleted");
+        loadBusinessExternalFinanceAgreements();
+    } catch (error) {
+        console.error("Error deleting agreement:", error);
+        alert("Error: " + error.message);
+    }
+}
+
+function openTransactionModalForBusinessExternal() {
+    openTransactionModal(null, null, true);
+}
+
+
+let currentViewingUserId = null;
+let currentViewingUserName = null;
+function openUserTransactionHistoryModal(
+    userId,
+    userName,
+    initialFilter = 'all',
+) {
+    currentViewingUserId = userId;
+    currentViewingUserName = userName;
+    const modal = document.getElementById("userTransactionHistoryModal");
+    const title = document.getElementById("userTransactionHistoryModalTitle");
+    const filterDropdown = document.getElementById(
+        "userTxHistoryCategoryFilter",
+    );
+    title.textContent = `Transaction History for ${userName}`;
+    filterDropdown.value = initialFilter;
+    filterDropdown.dataset.userId = userId;
+    filterDropdown.dataset.userName = userName;
+    loadUserTransactionHistory(userId, userName, initialFilter);
+    modal.style.display = "block";
+}
+function closeUserTransactionHistoryModal() {
+    const modal = document.getElementById("userTransactionHistoryModal");
+    if (modal) {
+        modal.style.display = "none";
+    }
+    currentViewingUserId = null;
+    currentViewingUserName = null;
+}
+async function loadUserTransactionHistory(
+    userId,
+    userName,
+    categoryGroupFilter = 'all',
+) {
+    const tableBody = document.getElementById(
+        "userTransactionHistoryTableBody",
+    );
+    if(!tableBody) return;
+    tableBody.innerHTML =
+        '<tr><td colspan="4" style="text-align:center;">Loading history...</td></tr>';
+    try {
+        if (allTransactionsCache.length === 0 && !isLoadingTransactions)
+            await loadAllTransactions();
+        let userTransactions = allTransactionsCache.filter(
+            (tx) => tx.user_id === userId,
+        );
+        if (categoryGroupFilter !== 'all') {
+            userTransactions = userTransactions.filter(tx => {
+                const categoryInfo = transactionCategories.find(cat => cat.name === tx.category); // Use detailed categories
+                if(!categoryInfo || !categoryInfo.group) return false;
+
+                if(categoryGroupFilter === "customer_loan") return categoryInfo.group === "customer_loan_out" || categoryInfo.group === "customer_loan_in";
+                else if(categoryGroupFilter === "customer_chit") return categoryInfo.group === "customer_chit_in" || categoryInfo.group === "customer_chit_out";
+                else if(categoryGroupFilter === "customer_revenue") return categoryInfo.group === "customer_revenue" || categoryInfo.group === "customer_service"; 
+                return categoryInfo.group === categoryGroupFilter;
+            });
+        }
+        userTransactions.sort(
+            (a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id,
+        );
+        tableBody.innerHTML = "";
+        if (userTransactions.length === 0) {
+            tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No transactions found for ${userName} with selected filter.</td></tr>`;
+            return;
+        }
+        userTransactions.forEach((tx) => {
+            const row = tableBody.insertRow();
+            row.insertCell().textContent = new Date(
+                tx.date,
+            ).toLocaleDateString();
+            row.insertCell().textContent = tx.category || "-";
+            row.insertCell().textContent = tx.description || "-";
+            const amountCell = row.insertCell();
+            amountCell.textContent = tx.amount.toFixed(2);
+            amountCell.className = tx.amount >= 0 ? "positive" : "negative";
+        });
+    } catch (error) {
+        console.error(
+            `Error loading transaction history for user ${userId}:`,
+            error,
+        );
+        if(tableBody)
+            tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;">Error: ${error.message}</td></tr>`;
+    }
+}
+
+function viewBusinessExternalTransactions(entityName, entityType, entityId){
+    alert(`Viewing transactions for ${entityType}: ${entityName} (ID: ${entityId}). (Modal/detailed view to be implemented)\nThis currently relies on matching the lender_id in transactions.`);
+    const entityTxns = allTransactionsCache.filter(tx => tx.lender_id === entityId);
+    console.log(`Filtered transactions for ${entityType} ${entityName}:`, entityTxns);
+    openEntityTransactionHistoryModal(entityId, entityName, 'lender');
+}
+
+function viewAgreementTransactions(agreementId, lenderName){ // lenderName here is actually agreement's entity name
+    alert(`Viewing transactions for agreement with ${lenderName} (ID: ${agreementId}). (Modal/detailed view to be implemented)\nThis currently relies on matching the agreement_id in transactions.`);
+    const agreementTxns = allTransactionsCache.filter(tx => tx.agreement_id === agreementId);
+     console.log("Filtered transactions for agreement:", agreementId, agreementTxns);
+    openEntityTransactionHistoryModal(agreementId, `Agreement with ${lenderName}`, 'agreement');
+}
 async function loadProducts() {
     if (isLoadingProducts) return productsCache;
     isLoadingProducts = true;
@@ -4738,8 +2765,8 @@ async function loadProducts() {
         tableBody.innerHTML =
             '<tr><td colspan="9" style="text-align:center;">Loading products...</td></tr>';
     try {
-        const res = await fetch(`${API}/products`);
-        if (!res.ok) {
+        const res = await apiFetch(`${API}/products`);
+        if (!res || !res.ok) {
             const errTxt = await res
                 .text()
                 .catch(() => "Could not read error response.");
@@ -4820,10 +2847,10 @@ async function openProductModal(productIdOrNull = null) {
             linkSupplierBtn.classList.remove('btn-disabled'); 
         }
         try {
-            const productRes = await fetch(
+            const productRes = await apiFetch(
                 `${API}/products/${productIdOrNull}`,
             );
-            if (!productRes.ok)
+            if (!productRes || !productRes.ok)
                 throw new Error("Failed to fetch product details.");
             const product = await productRes.json();
 
@@ -4934,11 +2961,12 @@ async function handleProductSubmit(e) {
         : `${API}/products`;
 
     try {
-        const res = await fetch(endpoint, {
+        const res = await apiFetch(endpoint, {
             method,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(data),
         });
+        if(!res) return;
         const result = await res.json();
         if (!res.ok)
             throw new Error(
@@ -4994,9 +3022,10 @@ async function deleteProduct(productId) {
     )
         return;
     try {
-        const res = await fetch(`${API}/products/${productId}`, {
+        const res = await apiFetch(`${API}/products/${productId}`, {
             method: "DELETE",
         });
+        if(!res) return;
         const result = await res.json();
         if (!res.ok)
             throw new Error(
@@ -5133,11 +3162,12 @@ async function handleProductSupplierLinkSubmit(e) {
         : `${API}/product-suppliers`;
 
     try {
-        const res = await fetch(endpoint, {
+        const res = await apiFetch(endpoint, {
             method,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(data),
         });
+        if(!res) return;
         const result = await res.json();
         if (!res.ok)
             throw new Error(
@@ -5164,10 +3194,10 @@ async function loadAndDisplayProductSuppliers(productId) {
         return;
     }
     try {
-        const res = await fetch(
+        const res = await apiFetch(
             `${API}/product-suppliers/product/${productId}`,
         );
-        if (!res.ok)
+        if (!res || !res.ok)
             throw new Error("Failed to fetch suppliers for this product.");
         productSuppliersCache = await res.json();
         displayProductSuppliersList(productSuppliersCache);
@@ -5218,10 +3248,11 @@ async function deleteProductSupplierLink(
     )
         return;
     try {
-        const res = await fetch(
+        const res = await apiFetch(
             `${API}/product-suppliers/${productSupplierId}`,
             { method: "DELETE" },
         );
+        if(!res) return;
         const result = await res.json();
         if (!res.ok)
             throw new Error(result.error || "Failed to unlink supplier.");
@@ -5237,8 +3268,6 @@ async function deleteProductSupplierLink(
         alert("Error: " + error.message);
     }
 }
-// --- START OF SCRIPT.JS CHUNK 8 (NEW - Invoice Functions) ---
-// --- Invoice Functions ---
 async function loadInvoices() {
     if (isLoadingInvoices) return invoicesCache;
     isLoadingInvoices = true;
@@ -5248,8 +3277,8 @@ async function loadInvoices() {
             '<tr><td colspan="8" style="text-align:center;">Loading invoices...</td></tr>';
 
     try {
-        const res = await fetch(`${API}/invoices`);
-        if (!res.ok) {
+        const res = await apiFetch(`${API}/invoices`);
+        if (!res || !res.ok) {
             const errText = await res
                 .text()
                 .catch(() => "Could not read error response.");
@@ -5382,8 +3411,8 @@ async function openInvoiceModal(invoiceId = null) {
     if (invoiceId) {
         title.textContent = "Edit Invoice";
         try {
-            const res = await fetch(`${API}/invoices/${invoiceId}`);
-            if (!res.ok)
+            const res = await apiFetch(`${API}/invoices/${invoiceId}`);
+            if (!res || !res.ok)
                 throw new Error(
                     `Failed to fetch invoice details: ${res.status} ${await res.text()}`,
                 );
@@ -5593,7 +3622,6 @@ function toggleConsigneeFields() {
     }
     if (!businessProfileCache && invoiceType === "TAX_INVOICE" && !editingInvoiceId && !isSameAsCustomer) {
         console.warn("Business profile cache not ready for toggleConsigneeFields when needed.");
-        // Optionally load it: await loadBusinessProfile(); then continue
     }
 
 
@@ -5645,7 +3673,6 @@ function toggleConsigneeFields() {
             if(consigneeGstinInput) consigneeGstinInput.value = businessProfileCache.gstin || "";
             if(consigneeStateCodeInput) consigneeStateCodeInput.value = businessProfileCache.state_code || "";
         } else if (!editingInvoiceId && invoiceType !== "TAX_INVOICE") {
-            // If new non-tax invoice and "same as" is unchecked, clear fields so user can type
             if(consigneeNameInput) consigneeNameInput.value = "";
             if(consigneeAddr1Input) consigneeAddr1Input.value = "";
             if(consigneeAddr2Input) consigneeAddr2Input.value = "";
@@ -5654,7 +3681,6 @@ function toggleConsigneeFields() {
             if(consigneeGstinInput) consigneeGstinInput.value = "";
             if(consigneeStateCodeInput) consigneeStateCodeInput.value = "";
         }
-        // If editing an existing invoice and "same as" is unchecked, fields should already be populated from DB during openInvoiceModal.
     }
 }
 
@@ -5697,6 +3723,8 @@ function closeInvoiceModal() {
     toggleConsigneeFields();
 }
 
+// In script.js, find and replace this function
+
 async function populateUserDropdownForInv() {
     try {
         if (
@@ -5704,18 +3732,26 @@ async function populateUserDropdownForInv() {
             (usersDataCache.length === 0 && !isLoadingUsers)
         )
             await loadUsers();
+        
         const dropdown = document.getElementById("inv_customer_id");
         if (!dropdown) return;
+
+        // --- THIS IS THE KEY CHANGE ---
+        const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
+
         const currentValue = dropdown.value;
         dropdown.innerHTML = '<option value="">Select Customer...</option>';
-        if (Array.isArray(usersDataCache)) {
-            usersDataCache.forEach((user) => {
+        
+        // Use the filtered array 'customersOnly'
+        if (Array.isArray(customersOnly)) {
+            customersOnly.forEach((user) => {
                 const option = document.createElement("option");
                 option.value = user.id;
                 option.textContent = `${user.username} (ID: ${user.id})`;
                 dropdown.appendChild(option);
             });
         }
+        
         if (currentValue) dropdown.value = currentValue; 
     } catch (error) {
         console.error(
@@ -6037,9 +4073,10 @@ async function handleInvoiceSubmit(e) {
     const endpoint = editingInvoiceId ? `${API}/invoices/${editingInvoiceId}` : `${API}/invoices`;
 
     try {
-        const res = await fetch(endpoint, {
+        const res = await apiFetch(endpoint, {
             method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
         });
+        if(!res) return;
         const result = await res.json();
         
         if (!res.ok) {
@@ -6079,7 +4116,8 @@ async function handleInvoiceSubmit(e) {
 async function deleteInvoice(invoiceId) {
     if (!confirm("Are you sure you want to delete this invoice?")) return;
     try {
-        const res = await fetch(`${API}/invoices/${invoiceId}`, { method: "DELETE" });
+        const res = await apiFetch(`${API}/invoices/${invoiceId}`, { method: "DELETE" });
+        if(!res) return;
         const result = await res.json();
         if (!res.ok) throw new Error(result.error || `Failed to delete: ${res.statusText}`);
         alert(result.message || "Invoice deleted");
@@ -6112,8 +4150,8 @@ async function printCurrentInvoice() {
 
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
     try {
-        const res = await fetch(`${API}/invoices/${invoiceIdToPrint}`);
-        if (!res.ok) {
+        const res = await apiFetch(`${API}/invoices/${invoiceIdToPrint}`);
+        if (!res || !res.ok) {
             const errorText = await res.text();
             throw new Error(`Failed to fetch invoice data for printing. Status: ${res.status} - ${errorText}`);
         }
@@ -6247,8 +4285,8 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                         <div>
                             <p class="underline">${toMsLabel}</p>
                             <p><strong>Name:</strong> ${invoiceData.customer_name || ""}</p>
-                            <p><strong>Address:</strong> ${invoiceData.customer_address_line1 || ""}${invoiceData.customer_address_line2 ? "<br>                   " + invoiceData.customer_address_line2 : ""}</p>
-                            <p>                   ${invoiceData.customer_city_pincode || ""}</p>`;
+                            <p><strong>Address:</strong> ${invoiceData.customer_address_line1 || ""}${invoiceData.customer_address_line2 ? "<br>                   " + invoiceData.customer_address_line2 : ""}</p>
+                            <p>                   ${invoiceData.customer_city_pincode || ""}</p>`;
         if (invoiceData.invoice_type === "TAX_INVOICE") {
             printHtml += `<p><strong>GSTIN:</strong> ${invoiceData.customer_gstin || "N/A"}</p>
                           <p><strong>State:</strong> ${invoiceData.customer_state || ""} <strong style="min-width:0px; padding-left:3mm;">State Code:</strong> ${invoiceData.customer_state_code || ""}</p>`;
@@ -6259,8 +4297,8 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             printHtml += `<div>
                             <p class="underline">${consigneeLabel}</p>
                             <p><strong>Name:</strong> ${invoiceData.consignee_name || invoiceData.customer_name || ""}</p>
-                            <p><strong>Address:</strong> ${invoiceData.consignee_address_line1 || invoiceData.customer_address_line1 || ""}${invoiceData.consignee_address_line2 || invoiceData.customer_address_line2 ? "<br>                   " + (invoiceData.consignee_address_line2 || invoiceData.customer_address_line2) : ""}</p>
-                            <p>                   ${invoiceData.consignee_city_pincode || invoiceData.customer_city_pincode || ""}</p>
+                            <p><strong>Address:</strong> ${invoiceData.consignee_address_line1 || invoiceData.customer_address_line1 || ""}${invoiceData.consignee_address_line2 || invoiceData.customer_address_line2 ? "<br>                   " + (invoiceData.consignee_address_line2 || invoiceData.customer_address_line2) : ""}</p>
+                            <p>                   ${invoiceData.consignee_city_pincode || invoiceData.customer_city_pincode || ""}</p>
                             <p><strong>GSTIN:</strong> ${invoiceData.consignee_gstin || invoiceData.customer_gstin || "N/A"}</p>
                             <p><strong>State:</strong> ${invoiceData.consignee_state || invoiceData.customer_state || ""} <strong style="min-width:0px; padding-left:3mm;">State Code:</strong> ${invoiceData.consignee_state_code || invoiceData.customer_state_code || ""}</p>
                         </div>`;
@@ -6304,9 +4342,9 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 : 15;
         for (let i = invoiceData.line_items.length; i < minRows; i++) {
             if (invoiceData.invoice_type === "TAX_INVOICE") {
-                printHtml += `<tr><td class="center">${srNo++}</td><td> </td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+                printHtml += `<tr><td class="center">${srNo++}</td><td> </td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
             } else {
-                printHtml += `<tr><td class="center">${srNo++}</td><td> </td><td></td><td></td><td></td></tr>`;
+                printHtml += `<tr><td class="center">${srNo++}</td><td> </td><td></td><td></td><td></td></tr>`;
             }
         }
         printHtml += `</tbody>`;
@@ -6429,7 +4467,6 @@ function convertAmountToWords(amount) {
     const tens = [
         "", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY", "SEVENTY", "EIGHTY", "NINETY",
     ];
-
     function numToWords(n) {
         if (n < 0) return "MINUS " + numToWords(Math.abs(n));
         if (n === 0) return ""; 
@@ -6440,8 +4477,9 @@ function convertAmountToWords(amount) {
         if (n < 100000) return (numToWords(Math.floor(n / 1000)) + " THOUSAND" + (n % 1000 !== 0 ? " " + numToWords(n % 1000) : "")).trim();
         if (n < 10000000) return (numToWords(Math.floor(n / 100000)) + " LAKH" + (n % 100000 !== 0 ? " " + numToWords(n % 100000) : "")).trim();
         if (n < 1000000000) return (numToWords(Math.floor(n / 10000000)) + " CRORE" + (n % 10000000 !== 0 ? " " + numToWords(n % 10000000) : "")).trim();
+        
         return "NUMBER TOO LARGE";
-    }
+    } // This was the missing brace
 
     if (wholePart === 0 && number === 0) return "ZERO"; 
 
@@ -6457,8 +4495,7 @@ function convertAmountToWords(amount) {
     }
     return words.trim();
 }
-// --- START OF SCRIPT.JS CHUNK 9 (NEW - Final Functions) ---
-// --- GLOBAL SEARCH ---
+
 async function performGlobalSearch() {
     const query = document
         .getElementById("globalSearchInput")
@@ -6481,7 +4518,6 @@ async function performGlobalSearch() {
     resultsTableBody.innerHTML = '<tr><td colspan="6">Searching...</td></tr>';
     resultsContainer.style.display = "block"; 
     try {
-        // Ensure all necessary data is loaded before searching
         if (allTransactionsCache.length === 0 && !isLoadingTransactions) await loadAllTransactions();
         if (usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
         if (externalEntitiesCache.length === 0 && !isLoadingLenders) await loadLenders(null, true); // Force load all
@@ -6535,32 +4571,9 @@ async function performGlobalSearch() {
                 const entityName = tx.external_entity_name || (tx.lender_id ? `Ext. ID ${tx.lender_id}` : "");
                 row.insertCell().textContent = userName + (entityName ? ` / ${entityName}` : "");
                 row.insertCell().textContent = tx.category;
+                row.insertCell().textContent = tx.description || "-";
                 
                 let displayedAmount = parseFloat(tx.amount);
-                const originalTxCategoryInfo = transactionCategories.find(c => c.name === tx.category);
-                if (originalTxCategoryInfo && (originalTxCategoryInfo.affectsLedger === 'cash' || originalTxCategoryInfo.affectsLedger === 'bank')) {
-                    if (originalTxCategoryInfo.type.includes("income") || 
-                        (originalTxCategoryInfo.group === "customer_payment" && displayedAmount < 0) || 
-                        (originalTxCategoryInfo.group === "supplier_return" && displayedAmount > 0 && (originalTxCategoryInfo.name.toLowerCase().includes("cash refund") || originalTxCategoryInfo.name.toLowerCase().includes("bank refund"))) ||
-                        ((originalTxCategoryInfo.name === "Sale to Customer (Cash)" || originalTxCategoryInfo.name === "Sale to Customer (Bank)") && displayedAmount > 0) ||
-                        (((originalTxCategoryInfo.name === "Loan Received by Business (Cash)") || originalTxCategoryInfo.name === "Loan Received by Business (to Bank)") && displayedAmount > 0)
-                       ) {
-                        displayedAmount = Math.abs(displayedAmount); 
-                    } else if (originalTxCategoryInfo.type.includes("expense") || 
-                                 (originalTxCategoryInfo.group === "supplier_payment" && displayedAmount < 0) || 
-                                 (originalTxCategoryInfo.group === "customer_return" && displayedAmount > 0 && (originalTxCategoryInfo.name.toLowerCase().includes("refund via cash") || originalTxCategoryInfo.name.toLowerCase().includes("refund via bank"))) ||
-                                 ((originalTxCategoryInfo.name === "Purchase from Supplier (Cash)" || originalTxCategoryInfo.name === "Purchase from Supplier (Bank)") && displayedAmount < 0) ||
-                                 (((originalTxCategoryInfo.name === "Loan Disbursed to Customer (Cash)") || originalTxCategoryInfo.name === "Loan Disbursed to Customer (Bank)") && displayedAmount > 0) || 
-                                 (((originalTxCategoryInfo.name === "Loan Principal Repaid by Business (from Cash)") || originalTxCategoryInfo.name === "Loan Principal Repaid by Business (from Bank)") && displayedAmount < 0) ||
-                                 (((originalTxCategoryInfo.name === "Loan Interest Paid by Business (from Cash)") || originalTxCategoryInfo.name === "Loan Interest Paid by Business (from Bank)") && displayedAmount < 0)
-                        ) {
-                        displayedAmount = -Math.abs(displayedAmount); 
-                    }
-                } else if (originalTxCategoryInfo && originalTxCategoryInfo.affectsLedger === 'both_cash_in_bank_out') { 
-                     displayedAmount = Math.abs(displayedAmount); 
-                } else if (originalTxCategoryInfo && originalTxCategoryInfo.affectsLedger === 'both_cash_out_bank_in') { 
-                     displayedAmount = Math.abs(displayedAmount); 
-                }
                 const amountCell = row.insertCell();
                 amountCell.textContent = displayedAmount.toFixed(2);
                 amountCell.className = displayedAmount >= 0 ? "positive" : "negative";
@@ -6589,7 +4602,8 @@ async function performGlobalSearch() {
                 row.insertCell().textContent = entity.lender_name;
                 row.insertCell().textContent = entity.entity_type || "General";
                 row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="navigateToBusinessFinanceAndOpenEntity(${entity.id}, '${entity.entity_type}')">View Entity</button>`;
-                row.insertCell(); row.insertCell();
+                row.insertCell();
+                row.insertCell();
             });
         }
         if (matchedProducts.length > 0) {
@@ -6655,159 +4669,295 @@ function navigateToInvoicesAndOpen(invoiceId) {
    navigateToSection('invoiceManagementSection');
     openInvoiceModal(invoiceId);
 }
-
-
-// --- REPORTS ---
-function loadReportDefaults() {
-    const now = new Date();
-    const reportMonthElem = document.getElementById("reportMonth");
-    const reportDateElem = document.getElementById("reportDate");
-    if (reportMonthElem) reportMonthElem.value = now.toISOString().slice(0, 7); 
-    if (reportDateElem) reportDateElem.value = now.toISOString().slice(0, 10); 
-
-    const reportTypeSelect = document.getElementById('reportType');
-    const dailyReportControls = document.getElementById('dailyReportControls');
-    const reportMonthInput = document.getElementById('reportMonth');
-
-    function toggleReportDateInput() {
-        if (!reportTypeSelect || !dailyReportControls || !reportMonthInput) return;
-        if (reportTypeSelect.value === 'daily_summary') {
-            dailyReportControls.style.display = 'block';
-            reportMonthInput.style.display = 'none';
-        } else {
-            dailyReportControls.style.display = 'none';
-            reportMonthInput.style.display = 'inline-block'; 
-        }
+async function generateAndDisplayReport(reportType) {
+    const period = document.getElementById('reportPeriodMonth').value;
+    const displayArea = document.getElementById('reportDisplayArea');
+    if (!period) {
+        alert("Please select a period (Month and Year).");
+        return;
     }
-    if (reportTypeSelect) reportTypeSelect.addEventListener('change', toggleReportDateInput);
-    toggleReportDateInput(); 
-}
-async function generateReport() {
-    const type = document.getElementById("reportType").value;
-    const month = document.getElementById("reportMonth").value; 
-    const date = document.getElementById("reportDate").value; 
-    const resultsDiv = document.getElementById("reportResults");
-    if(!resultsDiv) return;
-    resultsDiv.innerHTML = "<p>Loading report...</p>";
-    try {
-        let url;
-        if (type === "balance_summary") {
-            if(!month) { resultsDiv.innerHTML = '<p style="color:red;">Month is required for Balance Summary.</p>'; return; }
-            url = `${API}/reports/balances?month=${month}`;
-        } else if (type === "daily_summary") {
-            if(!date) { resultsDiv.innerHTML = '<p style="color:red;">Date is required for Daily Summary.</p>'; return; }
-            url = `${API}/reports/daily?date=${date}`;
-        } else if (type === "transaction_analytics") {
-            if(!month) { resultsDiv.innerHTML = '<p style="color:red;">Month is required for Transaction Analytics.</p>'; return; }
-            url = `${API}/reports/analytics?month=${month}`;
-        } else if (type === "user_history") {
-             if(!month) { resultsDiv.innerHTML = '<p style="color:red;">Month is required for User History.</p>'; return; }
-            url = `${API}/reports/user-history?month=${month}`;
-        } else {
-            resultsDiv.innerHTML = "<p>Invalid report type.</p>"; return;
-        }
+    if (!displayArea) return;
 
-        const res = await fetch(url);
-        const reportData = await res.json();
-        if (!res.ok) throw new Error(reportData.error || `Failed to generate report: ${res.statusText}`);
+    displayArea.style.display = 'block';
+    displayArea.innerHTML = `<p>Generating ${reportType.replace(/_/g, ' ')} report for ${period}...</p>`;
 
-        if (type === "balance_summary") renderBalanceReport(reportData, month);
-        else if (type === "daily_summary") renderDailyReport(reportData, date);
-        else if (type === "transaction_analytics") renderTransactionReport(reportData, month);
-        else if (type === "user_history") renderUserHistoryReport(reportData, month);
-    } catch (error) { console.error("Report error:", error); resultsDiv.innerHTML = `<p style="color:red;">Failed: ${error.message}</p>`; }
-}
-function renderBalanceReport(data, month) {
-    const resultsDiv = document.getElementById("reportResults");
-    if(!resultsDiv || !data) return;
-    const reportHTML = `
-      <div class="report-card">
-        <h3 class="report-title">Balance Summary - ${month}</h3>
-        <div class="daily-stats">
-          <div class="stat-card"><h4>Total Initial (Cust. Balances)</h4><p>₹${(data.summary?.total_initial_balance_all_users ?? 0).toFixed(2)}</p></div>
-          <div class="stat-card"><h4>Total Current (Cust. Balances)</h4><p>₹${(data.summary?.total_current_balance_all_users ?? 0).toFixed(2)}</p></div>
-          <div class="stat-card"><h4>Business Net Change (Month)</h4><p class="${(data.summary?.net_change_this_month ?? 0) >= 0 ? "positive" : "negative"}">₹${(data.summary?.net_change_this_month ?? 0).toFixed(2)}</p></div>
-          <div class="stat-card"><h4>Active Customers (Month)</h4><p>${data.summary?.user_count_with_transactions_this_month ?? 0}</p></div>
-        </div>
-        <h4>Customer/User Balances with Business</h4>
-        <table><thead><tr><th>User</th><th>Opening Bal. with Business (₹)</th><th>Net Change (Month) (₹)</th><th>Current Bal. with Business (₹)</th></tr></thead><tbody>
-        ${data.users && data.users.length > 0 ? data.users.map(u => `<tr><td>${u.username}</td><td>₹${(u.initial_balance ?? 0).toFixed(2)}</td><td class="${(u.net_change_this_month ?? 0) >= 0 ? "positive" : "negative"}">₹${(u.net_change_this_month ?? 0).toFixed(2)}</td><td class="${(u.current_balance ?? 0) >= 0 ? "positive-balance" : "negative-balance"}">₹${(u.current_balance ?? 0).toFixed(2)}</td></tr>`).join("") : '<tr><td colspan="4">No data.</td></tr>'}
-        </tbody></table></div>`;
-    resultsDiv.innerHTML = reportHTML;
-}
-function renderDailyReport(data, date) {
-    const resultsDiv = document.getElementById("reportResults");
-    if(!resultsDiv || !data) return;
-    const reportHTML = `
-      <div class="report-card">
-        <h3 class="report-title">Daily Business Summary - ${new Date(date + "T00:00:00").toLocaleDateString()}</h3>
-        <div class="daily-stats">
-          <div class="stat-card"><h4>Transactions</h4><p>${data.totalTransactions || 0}</p></div>
-          <div class="stat-card"><h4>Net Cash Flow</h4><p class="${(data.totalNetAmount ?? 0) >= 0 ? "positive" : "negative"}">₹${(data.totalNetAmount ?? 0).toFixed(2)}</p></div>
-          <div class="stat-card"><h4>Total Cash In</h4><p class="positive">₹${(data.totalIncome ?? 0).toFixed(2)}</p></div>
-          <div class="stat-card"><h4>Total Cash Out</h4><p class="negative">₹${(data.totalExpense ?? 0).toFixed(2)}</p></div>
-        </div>
-        <h4>Transactions</h4>
-        <table><thead><tr><th>User/Customer</th><th>Amount (₹)</th><th>Category</th><th>Description</th></tr></thead><tbody>
-        ${data.transactions && data.transactions.length > 0 ? data.transactions.map(tx => `<tr><td>${tx.username || tx.external_entity_name || "N/A (Business)"}</td><td class="${(tx.amount ?? 0) >= 0 ? "positive" : "negative"}">₹${(tx.amount ?? 0).toFixed(2)}</td><td>${tx.category || "-"}</td><td>${tx.description || "-"}</td></tr>`).join("") : '<tr><td colspan="4">No transactions.</td></tr>'}
-        </tbody></table></div>`;
-    resultsDiv.innerHTML = reportHTML;
-}
-function renderTransactionReport(data, month) {
-    const resultsDiv = document.getElementById("reportResults");
-    if(!resultsDiv || !data) return;
-    const reportHTML = `
-      <div class="report-card">
-        <h3 class="report-title">Business Transaction Analytics - ${month}</h3>
-        <div class="daily-stats">
-          <div class="stat-card"><h4>Transactions</h4><p>${data.totalTransactions ?? 0}</p></div>
-          <div class="stat-card"><h4>Net Cash Flow</h4><p class="${(data.totalNetAmount ?? 0) >= 0 ? "positive" : "negative"}">₹${(data.totalNetAmount ?? 0).toFixed(2)}</p></div>
-          <div class="stat-card"><h4>Total Cash In</h4><p class="positive">₹${(data.totalIncome ?? 0).toFixed(2)}</p></div>
-          <div class="stat-card"><h4>Total Cash Out</h4><p class="negative">₹${(data.totalExpense ?? 0).toFixed(2)}</p></div>
-        </div>
-        <h4>Category Breakdown</h4>
-        <table><thead><tr><th>Category</th><th>Count</th><th>Net Amount (₹)</th><th>Cash In (₹)</th><th>Cash Out (₹)</th></tr></thead><tbody>
-        ${data.categories && data.categories.length > 0 ? data.categories.map(cat => `<tr><td>${cat.category}</td><td>${cat.count}</td><td class="${(cat.net_amount ?? 0) >= 0 ? "positive" : "negative"}">₹${(cat.net_amount ?? 0).toFixed(2)}</td><td class="positive">₹${(cat.total_income ?? 0).toFixed(2)}</td><td class="negative">₹${(cat.total_expense ?? 0).toFixed(2)}</td></tr>`).join("") : '<tr><td colspan="5">No category data.</td></tr>'}
-        </tbody></table></div>`;
-    resultsDiv.innerHTML = reportHTML;
-}
-function renderUserHistoryReport(data, month) {
-    const resultsDiv = document.getElementById("reportResults");
-    if(!resultsDiv || !data) return;
-    const reportHTML = `
-      <div class="report-card">
-        <h3 class="report-title">Customer/User Activity - ${month}</h3>
-        <table><thead><tr><th>User</th><th>Txns (Month)</th><th>Net Cashflow (Month) (₹)</th><th>Cash In from User (Month) (₹)</th><th>Cash Out to User (Month) (₹)</th><th>Last Activity (Month)</th></tr></thead><tbody>
-        ${data.users && data.users.length > 0 ? data.users.map(u => `<tr><td>${u.username}</td><td>${u.transaction_count_this_month}</td><td class="${(u.net_amount_this_month ?? 0) >= 0 ? "positive" : "negative"}">₹${(u.net_amount_this_month ?? 0).toFixed(2)}</td><td class="positive">₹${(u.total_income_this_month ?? 0).toFixed(2)}</td><td class="negative">₹${(u.total_expense_this_month ?? 0).toFixed(2)}</td><td>${u.last_activity_this_month ? new Date(u.last_activity_this_month + "T00:00:00").toLocaleDateString() : "N/A"}</td></tr>`).join("") : '<tr><td colspan="6">No user activity for this month.</td></tr>'}
-        </tbody></table></div>`;
-    resultsDiv.innerHTML = reportHTML;
-}
+    if (allTransactionsCache.length === 0) await loadAllTransactions();
+    if (invoicesCache.length === 0) await loadInvoices();
+    if (productsCache.length === 0) await loadProducts();
+    if (usersDataCache.length === 0) await loadUsers();
 
+    let reportHtml = '';
+    const [year, month] = period.split('-');
 
-async function suggestNextInvoiceNumber() {
-    const invoiceNumberInput = document.getElementById("inv_invoice_number_display");
-    if (!invoiceNumberInput) return;
-    try {
-        const res = await fetch(`${API}/invoices/suggest-next-number`);
-        const data = await res.json();
-        if (data.next_invoice_number) {
-            invoiceNumberInput.value = data.next_invoice_number;
-        } else if (data.message) {
-            // console.warn("Suggest next invoice number:", data.message); // Less intrusive than alert
-        }
-    } catch (error) {
-        console.error("Error suggesting next invoice number:", error);
-        // alert("Could not suggest next invoice number.");
+    const monthlyTransactions = allTransactionsCache.filter(tx => {
+        return tx.date.startsWith(period);
+    });
+
+    switch (reportType) {
+        case 'turnover_report':
+            reportHtml = generateTurnoverReport(period);
+            break;
+        case 'pnl_summary':
+            reportHtml = generatePnlReport(monthlyTransactions, period);
+            break;
+        case 'cash_flow':
+            reportHtml = generateCashFlowReport(monthlyTransactions, period);
+            setTimeout(() => createCashFlowChart(monthlyTransactions), 50);
+            break;
+        case 'top_customers':
+            reportHtml = generateTopCustomersReport(monthlyTransactions, period);
+            break;
+        case 'top_products':
+            reportHtml = await generateTopProductsReport(period);
+            break;
     }
+    
+    displayArea.innerHTML = reportHtml;
+}
+
+function generateTurnoverReport(period) {
+    const monthlyInvoices = invoicesCache.filter(inv => 
+        inv.invoice_date.startsWith(period) && 
+        inv.status !== 'Void' && 
+        inv.status !== 'Draft'
+    );
+
+    if (monthlyInvoices.length === 0) {
+        return `<h3 class="report-title">Turnover Report - ${period}</h3><p>No sales invoices found for this period.</p>`;
+    }
+
+    let totalTurnover = 0;
+    const dailyData = {}; 
+
+    monthlyInvoices.forEach(inv => {
+        const turnover = parseFloat(inv.amount_before_tax || 0);
+        totalTurnover += turnover;
+        
+        const date = inv.invoice_date.split('T')[0];
+        dailyData[date] = (dailyData[date] || 0) + turnover;
+    });
+    
+    const sortedDailyData = Object.entries(dailyData).sort((a, b) => new Date(a[0]) - new Date(b[0]));
+    
+    let tableRows = sortedDailyData.map(([date, amount]) => {
+        return `<tr>
+                    <td>${new Date(date).toLocaleDateString()}</td>
+                    <td class="num positive">₹${amount.toFixed(2)}</td>
+                </tr>`;
+    }).join('');
+
+    return `
+        <h3 class="report-title">Turnover Report - ${period}</h3>
+        <div class="pnl-summary-grid">
+             <div class="pnl-card"><h5>Total Turnover (Before Tax)</h5><p class="positive">₹${totalTurnover.toFixed(2)}</p></div>
+             <div class="pnl-card"><h5>Number of Invoices</h5><p>${monthlyInvoices.length}</p></div>
+        </div>
+        <table>
+            <thead><tr><th>Date</th><th class="num">Daily Turnover (₹)</th></tr></thead>
+            <tbody>${tableRows}</tbody>
+        </table>
+    `;
+}
+
+function generatePnlReport(transactions, period) {
+    let totalRevenue = 0;
+    let totalCogs = 0;
+    let totalExpenses = 0;
+
+    invoicesCache.forEach(invoice => {
+        if(invoice.invoice_date.startsWith(period) && invoice.status !== 'Void' && invoice.status !== 'Draft'){
+            totalRevenue += parseFloat(invoice.amount_before_tax || 0);
+            // A simple COGS estimation, this should be improved in a real system
+            totalCogs += parseFloat(invoice.amount_before_tax || 0) * 0.60; 
+        }
+    });
+
+    transactions.forEach(tx => {
+        const catInfo = transactionCategories.find(c => c.name === tx.category);
+        const amount = parseFloat(tx.amount || 0);
+        if (catInfo && catInfo.group === 'biz_ops' && amount < 0) {
+            totalExpenses += Math.abs(amount);
+        }
+    });
+
+    const grossProfit = totalRevenue - totalCogs;
+    const netProfit = grossProfit - totalExpenses;
+
+    return `
+        <h3 class="report-title">Profit & Loss Summary - ${period}</h3>
+        <div class="pnl-summary-grid">
+            <div class="pnl-card"><h5>Total Revenue</h5><p class="positive">₹${totalRevenue.toFixed(2)}</p></div>
+            <div class="pnl-card"><h5>Cost of Goods Sold (Est.)</h5><p class="negative">₹${totalCogs.toFixed(2)}</p></div>
+            <div class="pnl-card gross-profit"><h5>Gross Profit</h5><p>₹${grossProfit.toFixed(2)}</p></div>
+            <div class="pnl-card"><h5>Operating Expenses</h5><p class="negative">₹${totalExpenses.toFixed(2)}</p></div>
+        </div>
+        <div class="pnl-summary-grid">
+            <div class="pnl-card net-profit" style="grid-column: 1 / -1;">
+                <h5>Net Profit</h5><p>₹${netProfit.toFixed(2)}</p>
+            </div>
+        </div>
+    `;
+}
+
+function generateCashFlowReport(transactions, period) {
+    return `
+        <h3 class="report-title">Monthly Cash Flow - ${period}</h3>
+        <div class="report-chart-wrapper">
+            <canvas id="cashFlowChart"></canvas>
+        </div>
+    `;
+}
+
+function createCashFlowChart(transactions) {
+    const canvas = document.getElementById("cashFlowChart");
+    if (!canvas) return;
+    if (cashFlowChartInstance) cashFlowChartInstance.destroy();
+    const ctx = canvas.getContext("2d");
+
+    let income = 0;
+    let expenses = 0;
+
+    transactions.forEach(tx => {
+        const catInfo = transactionCategories.find(c => c.name === tx.category);
+        if (catInfo && (catInfo.affectsLedger === 'cash' || catInfo.affectsLedger === 'bank' || catInfo.affectsLedger.startsWith('both'))) {
+            const amount = parseFloat(tx.amount || 0);
+            
+            if (catInfo.type.includes('income') || (catInfo.group === 'customer_payment' && amount < 0) || catInfo.affectsLedger === 'both_cash_in_bank_out') {
+                income += Math.abs(amount);
+            } else if (catInfo.type.includes('expense') || (catInfo.group === 'supplier_payment' && amount < 0) || catInfo.affectsLedger === 'both_cash_out_bank_in') {
+                expenses += Math.abs(amount);
+            }
+        }
+    });
+    
+    cashFlowChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: ['Cash Flow'],
+            datasets: [
+                {
+                    label: 'Income',
+                    data: [income],
+                    backgroundColor: 'rgba(40, 167, 69, 0.7)',
+                    borderColor: 'rgba(40, 167, 69, 1)',
+                    borderWidth: 1
+                },
+                {
+                    label: 'Expenses',
+                    data: [expenses],
+                    backgroundColor: 'rgba(220, 53, 69, 0.7)',
+                    borderColor: 'rgba(220, 53, 69, 1)',
+                    borderWidth: 1
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: { callback: value => `₹${value.toLocaleString()}` }
+                }
+            },
+            plugins: {
+                title: { display: true, text: 'Income vs. Expenses' },
+                tooltip: { 
+                    callbacks: { 
+                        label: (context) => `₹${context.parsed.y.toLocaleString()}` 
+                    } 
+                }
+            }
+        }
+    });
 }
 
 
-// Enhanced Dashboard Functions
-// Note: revenueChartInstance and categoryChartInstance are declared globally at the top now.
+function generateTopCustomersReport(transactions, period) {
+    const customerRevenue = {};
+    transactions.forEach(tx => {
+        const catInfo = transactionCategories.find(c => c.name === tx.category);
+        if (catInfo && catInfo.group === 'customer_revenue' && tx.user_id) {
+            const amount = parseFloat(tx.amount || 0);
+            customerRevenue[tx.user_id] = (customerRevenue[tx.user_id] || 0) + amount;
+        }
+    });
 
+    const sortedCustomers = Object.entries(customerRevenue)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10); // Top 10
+
+    let tableRows = sortedCustomers.map(([userId, total]) => {
+        const user = usersDataCache.find(u => u.id == userId);
+        return `<tr><td>${user ? user.username : 'Unknown User'}</td><td class="num positive">₹${total.toFixed(2)}</td></tr>`;
+    }).join('');
+
+    if (sortedCustomers.length === 0) {
+        tableRows = '<tr><td colspan="2" style="text-align:center;">No customer revenue data for this period.</td></tr>';
+    }
+
+    return `
+        <h3 class="report-title">Top 10 Customers by Revenue - ${period}</h3>
+        <table>
+            <thead><tr><th>Customer Name</th><th class="num">Total Revenue</th></tr></thead>
+            <tbody>${tableRows}</tbody>
+        </table>
+    `;
+}
+
+async function generateTopProductsReport(period) {
+    const productSales = {};
+
+    const monthlyInvoices = invoicesCache.filter(inv => inv.invoice_date.startsWith(period));
+
+    for (const inv of monthlyInvoices) {
+        if (!inv.line_items) {
+            try {
+                const res = await apiFetch(`${API}/invoices/${inv.id}`);
+                if(!res) continue;
+                const detailedInvoice = await res.json();
+                inv.line_items = detailedInvoice.line_items || [];
+            } catch (e) {
+                console.error(`Could not fetch line items for invoice ${inv.id}`, e);
+                continue;
+            }
+        }
+
+        inv.line_items.forEach(item => {
+            if (item.product_id) {
+                const qty = parseFloat(item.quantity || 0);
+                productSales[item.product_id] = (productSales[item.product_id] || 0) + qty;
+            }
+        });
+    }
+
+    const sortedProducts = Object.entries(productSales)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    let tableRows = sortedProducts.map(([productId, quantity]) => {
+        const product = productsCache.find(p => p.id == productId);
+        return `<tr><td>${product ? product.product_name : 'Unknown Product'}</td><td class="num">${quantity.toFixed(2)}</td></tr>`;
+    }).join('');
+
+    if (sortedProducts.length === 0) {
+        tableRows = '<tr><td colspan="2" style="text-align:center;">No product sales data for this period.</td></tr>';
+    }
+
+    return `
+        <h3 class="report-title">Top 10 Selling Products by Quantity - ${period}</h3>
+        <table>
+            <thead><tr><th>Product Name</th><th class="num">Total Quantity Sold</th></tr></thead>
+            <tbody>${tableRows}</tbody>
+        </table>
+    `;
+}
+
+// --- DASHBOARD CHARTS AND ACTIVITY ---
 function initializeDashboardCharts() {
     if (revenueChartInstance) { revenueChartInstance.destroy(); revenueChartInstance = null; }
     if (categoryChartInstance) { categoryChartInstance.destroy(); categoryChartInstance = null; }
+    if (cashFlowChartInstance) { cashFlowChartInstance.destroy(); cashFlowChartInstance = null; }
 
     createRevenueChart();
     createCategoryChart();
@@ -6817,32 +4967,68 @@ function initializeDashboardCharts() {
 function createRevenueChart() {
     const canvas = document.getElementById("revenueChart");
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-
-    const daysInPeriod = parseInt(document.getElementById('dashboardPeriod')?.value || 30);
-    const now = new Date();
+    if (revenueChartInstance) { revenueChartInstance.destroy(); }
     
+    const ctx = canvas.getContext("2d");
+    const period = document.getElementById('dashboardPeriod').value;
+    const granularity = document.querySelector('.chart-controls .chart-time-btn.active').dataset.period;
+    const ranges = getPeriodDateRanges(period);
+
     const labels = [];
-    const revenueDataPoints = [];
+    const dataPoints = [];
+    const aggregatedData = new Map();
 
-    for (let i = 0; i < daysInPeriod; i++) {
-        const date = new Date(now);
-        date.setDate(now.getDate() - (daysInPeriod - 1 - i)); 
-        labels.push(date.toLocaleDateString("en-US", { month: "short", day: "numeric" }));
+    const relevantInvoices = invoicesCache.filter(inv => {
+        const invDate = new Date(inv.invoice_date);
+        return invDate >= ranges.currentStart && invDate <= ranges.currentEnd && inv.status !== 'Void' && inv.status !== 'Draft';
+    });
 
-        const dayTransactions = allTransactionsCache.filter(tx => {
-            const txDate = new Date(tx.date || tx.transaction_date);
-            return txDate.toDateString() === date.toDateString();
+    if (granularity === 'daily') {
+        let currentDate = new Date(ranges.currentStart);
+        while (currentDate <= ranges.currentEnd) {
+            aggregatedData.set(currentDate.toISOString().split('T')[0], 0);
+            currentDate.setDate(currentDate.getDate() + 1);
+        }
+        relevantInvoices.forEach(inv => {
+            const dateStr = inv.invoice_date.split('T')[0];
+            const revenue = parseFloat(inv.amount_before_tax || 0);
+            aggregatedData.set(dateStr, (aggregatedData.get(dateStr) || 0) + revenue);
         });
-        
-        const dailyRevenue = dayTransactions.reduce((sum, tx) => {
-            const amount = parseFloat(tx.amount || 0);
-            const catInfo = transactionCategories.find(c => c.name === tx.category); // Use full original categories
-            return (catInfo && catInfo.group === "customer_revenue" && amount > 0) ? sum + amount : sum;
-        }, 0);
-        revenueDataPoints.push(dailyRevenue);
+        aggregatedData.forEach((value, key) => {
+            labels.push(new Date(key).toLocaleDateString("en-US", { month: "short", day: "numeric" }));
+            dataPoints.push(value);
+        });
+    } else if (granularity === 'weekly') {
+        relevantInvoices.forEach(inv => {
+            const invDate = new Date(inv.invoice_date);
+            const dayOfWeek = invDate.getDay();
+            const firstDayOfWeek = new Date(invDate.setDate(invDate.getDate() - dayOfWeek));
+            const weekKey = firstDayOfWeek.toISOString().split('T')[0];
+            const revenue = parseFloat(inv.amount_before_tax || 0);
+            aggregatedData.set(weekKey, (aggregatedData.get(weekKey) || 0) + revenue);
+        });
+        const sortedWeeks = Array.from(aggregatedData.keys()).sort();
+        sortedWeeks.forEach(weekKey => {
+            labels.push(`Wk of ${new Date(weekKey).toLocaleDateString("en-US", { month: 'short', day: 'numeric' })}`);
+            dataPoints.push(aggregatedData.get(weekKey));
+        });
+    } else if (granularity === 'monthly') {
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        for(let i=0; i<12; i++) {
+             if (new Date(ranges.currentStart.getFullYear(), i, 1) > ranges.currentEnd) break;
+             if (new Date(ranges.currentStart.getFullYear(), i+1, 0) < ranges.currentStart) continue;
+             aggregatedData.set(i, 0); // Key is month index (0-11)
+        }
+        relevantInvoices.forEach(inv => {
+            const monthIndex = new Date(inv.invoice_date).getMonth();
+            const revenue = parseFloat(inv.amount_before_tax || 0);
+            aggregatedData.set(monthIndex, (aggregatedData.get(monthIndex) || 0) + revenue);
+        });
+         aggregatedData.forEach((value, key) => {
+            labels.push(monthNames[key]);
+            dataPoints.push(value);
+        });
     }
-
 
     revenueChartInstance = new Chart(ctx, {
         type: "line",
@@ -6850,8 +5036,8 @@ function createRevenueChart() {
             labels: labels,
             datasets: [{
                 label: "Revenue",
-                data: revenueDataPoints,
-                borderColor: "rgba(74, 144, 226, 1)", 
+                data: dataPoints,
+                borderColor: "rgba(74, 144, 226, 1)",
                 backgroundColor: "rgba(74, 144, 226, 0.1)",
                 borderWidth: 2,
                 fill: true,
@@ -6862,13 +5048,12 @@ function createRevenueChart() {
         },
         options: {
             responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: (context) => `Revenue: ₹${context.parsed.y.toLocaleString()}` } } },
             scales: {
                 y: { beginAtZero: true, ticks: { callback: value => "₹" + value.toLocaleString() } },
                 x: { grid: { display: false } }
             },
             interaction: { intersect: false, mode: 'index' },
-            tooltips: { callbacks: { label: (context) => `Revenue: ₹${context.parsed.y.toLocaleString()}` } }
         },
     });
 }
@@ -6877,16 +5062,14 @@ function createCategoryChart() {
     const canvas = document.getElementById("categoryChart");
     const placeholder = document.getElementById("topSellingPlaceholder");
     if (!canvas || !placeholder) return;
+    if (categoryChartInstance) categoryChartInstance.destroy();
     const ctx = canvas.getContext("2d");
-
+    
     const categoryData = {};
     allTransactionsCache.forEach(tx => {
         const catInfo = transactionCategories.find(c => c.name === tx.category); // Use full original categories
         if (catInfo && catInfo.isProductSale && catInfo.group === "customer_revenue") { 
             const amount = Math.abs(parseFloat(tx.amount || 0));
-            // This aggregates by the full category name, which might be too granular if you have "Sale (Cash)" and "Sale (Bank)"
-            // If you want to aggregate by base product name, you'd need to link transactions to products via line items.
-            // For now, this shows top *revenue-generating transaction categories* rather than specific products.
             categoryData[tx.category] = (categoryData[tx.category] || 0) + amount;
         }
     });
@@ -6898,15 +5081,10 @@ function createCategoryChart() {
     if (sortedCategories.length === 0) {
         placeholder.style.display = 'block';
         canvas.style.display = 'none';
-        if (categoryChartInstance) { 
-            categoryChartInstance.destroy();
-            categoryChartInstance = null;
-        }
         return;
     }
     placeholder.style.display = 'none';
     canvas.style.display = 'block';
-
 
     const chartColors = ["#4A90E2", "#50E3C2", "#F5A623", "#BD10E0", "#7ED321"];
 
@@ -6939,8 +5117,6 @@ function updateDashboardPeriod() {
 }
 
 function updateChartsBasedOnPeriod() {
-    if (revenueChartInstance) revenueChartInstance.destroy();
-    if (categoryChartInstance) categoryChartInstance.destroy();
     createRevenueChart();
     createCategoryChart(); 
 }
@@ -6951,9 +5127,7 @@ document.querySelectorAll('.chart-time-btn').forEach(button => {
         event.target.classList.add('active');
         updateChartsBasedOnPeriod();
     });
-});
-
-
+})
 async function loadRecentActivity() {
     const activityList = document.getElementById("recentActivityList");
     if (!activityList) return;
@@ -7007,7 +5181,7 @@ async function loadRecentActivity() {
             icon: 'fa-file-invoice-dollar',
             bgColor: 'var(--info-color)'
         }));
-    
+
     const recentCustomers = usersDataCache
         .sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
         .slice(0,1) 
@@ -7094,7 +5268,6 @@ function showLowStockProducts() {
     alert(alertMessage);
     navigateToSection('inventoryManagementSection');
 }
-
 function generateQuickReport() {
     const totalRevenue = allTransactionsCache.filter(tx => parseFloat(tx.amount || 0) > 0).reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
     const totalExpenses = allTransactionsCache.filter(tx => parseFloat(tx.amount || 0) < 0).reduce((sum, tx) => sum + Math.abs(parseFloat(tx.amount || 0)), 0);
@@ -7122,7 +5295,7 @@ Invoices:
 - Overdue: ${overdueInvoicesCount}
 
 Generated on: ${new Date().toLocaleString()}
-    `;
+`;
     alert(report);
      navigateToSection('reportsSection');
 }
@@ -7130,69 +5303,261 @@ Generated on: ${new Date().toLocaleString()}
 function refreshRecentActivity() {
     loadRecentActivity();
 }
-// Inside script.js
 
-function navigateToSection(sectionId) {
-    document.querySelectorAll('.sidebar-nav .nav-item').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.app-section').forEach(sec => sec.style.display = 'none');
+function openEntityTransactionHistoryModal(entityId, entityName, type = 'lender') {
+    const modal = document.getElementById("entityTransactionHistoryModal");
+    const title = document.getElementById("entityTransactionHistoryModalTitle");
+    const tableBody = document.getElementById("entityTransactionHistoryTableBody");
+
+    if (!modal || !title || !tableBody) return;
+
+    title.textContent = `Transaction History for ${entityName}`;
+    tableBody.innerHTML = '<tr><td colspan="5">Loading...</td></tr>';
+
+    let filteredTxns;
+    if (type === 'lender') {
+        filteredTxns = allTransactionsCache.filter(tx => tx.lender_id === entityId);
+    } else if (type === 'agreement') {
+        filteredTxns = allTransactionsCache.filter(tx => tx.agreement_id === entityId);
+    } else {
+        filteredTxns = [];
+    }
+
+    filteredTxns.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    tableBody.innerHTML = "";
+    if (filteredTxns.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No transactions found.</td></tr>';
+    } else {
+        filteredTxns.forEach(tx => {
+            const row = tableBody.insertRow();
+            row.insertCell().textContent = new Date(tx.date).toLocaleDateString();
+            row.insertCell().textContent = tx.category;
+            row.insertCell().textContent = tx.description || '-';
+            
+            const amountCell = row.insertCell();
+            amountCell.textContent = parseFloat(tx.amount).toFixed(2);
+            amountCell.className = tx.amount >= 0 ? "positive" : "negative";
+
+            let relatedTo = 'N/A';
+            if(tx.user_id) relatedTo = usersDataCache.find(u => u.id === tx.user_id)?.username || `Cust. #${tx.user_id}`;
+            else if(tx.lender_id) relatedTo = externalEntitiesCache.find(e => e.id === tx.lender_id)?.lender_name || `Lender #${tx.lender_id}`;
+            row.insertCell().textContent = relatedTo;
+        });
+    }
+
+    modal.style.display = "block";
+}
+
+function closeEntityTransactionHistoryModal() {
+    const modal = document.getElementById("entityTransactionHistoryModal");
+    if (modal) modal.style.display = 'none';
+}
+
+
+function openRepayLoanModal(agreementId) {
+    const agreement = businessAgreementsCache.find(a => a.agreement_id === agreementId);
+    if (!agreement) {
+        alert("Error: Could not find the agreement data.");
+        return;
+    }
+
+    const modal = document.getElementById("repayLoanModal");
+    const form = document.getElementById("repayLoanForm");
+    form.reset();
     
-    const targetNavItem = document.querySelector(`.sidebar-nav .nav-item[data-section="${sectionId}"]`);
-    const targetSection = document.getElementById(sectionId);
-    const mainHeader = document.getElementById("mainHeaderText");
+    const isLoanTaken = agreement.agreement_type === 'loan_taken_by_biz';
 
-    if (targetNavItem && targetSection) {
-        targetNavItem.classList.add('active');
-        targetSection.style.display = 'block';
+    document.getElementById('repayLoanModalTitle').textContent = isLoanTaken ? `Repay Loan to ${agreement.lender_name}` : `Receive Loan Payment from ${agreement.lender_name}`;
+    document.getElementById('repay_agreement_id').value = agreement.agreement_id;
+    
+    const outstandingPrincipal = parseFloat(agreement.outstanding_principal || 0);
+    const interestPayableOrReceivable = parseFloat(agreement.interest_payable || 0);
 
-        let headerText = targetNavItem.textContent.replace(/[0-9]/g, '').trim(); 
-        if (headerText.includes("Dashboard")) headerText = "Dashboard";
-        else if (headerText.includes("Customers")) headerText = "Customer Management";
-        else if (headerText.includes("Suppliers")) headerText = "Supplier Management";
-        else if (headerText.includes("Inventory")) headerText = "Inventory Management";
-        else if (headerText.includes("Invoices")) headerText = "Invoice Management";
-        else if (headerText.includes("Transactions")) headerText = "All Transactions";
-        else if (headerText.includes("Ledgers")) headerText = "Business Ledgers";
-        else if (headerText.includes("Business Finance")) headerText = "Business Finance";
-        else if (headerText.includes("Reports")) headerText = "Financial Reports";
-        
-        if(mainHeader) mainHeader.textContent = headerText;
+    document.getElementById('repay_outstanding_principal').textContent = outstandingPrincipal.toFixed(2);
+    document.getElementById('repay_interest_payable').textContent = interestPayableOrReceivable.toFixed(2);
+    document.getElementById('repay_date').value = new Date().toISOString().split('T')[0];
+    
+    document.querySelector('label[for="repay_payment_amount"]').textContent = isLoanTaken ? "Payment Amount (₹)*" : "Received Amount (₹)*";
+    document.querySelector('label[for="repay_method_bank"]').textContent = isLoanTaken ? "From Bank" : "To Bank";
+    document.querySelector('label[for="repay_method_cash"]').textContent = isLoanTaken ? "From Cash" : "To Cash";
+    
+    document.getElementById('repay_type_combined').checked = true;
+    toggleRepayOptions();
 
-        // Specific load functions for sections
-        if (sectionId === "dashboardAnalytics") {
-            updateDashboardCards();
-            initializeDashboardCharts(); 
-            loadRecentActivity();
-        } else if (sectionId === "customerManagementSection") {
-            loadUsers().then(() => loadCustomerSummaries());
-        } else if (sectionId === "supplierManagementSection") {
-            loadSupplierSummaries(); // This internally calls loadLenders("Supplier", true)
-        } else if (sectionId === "inventoryManagementSection") {
-            loadProducts();
-        } else if (sectionId === "invoiceManagementSection") {
-            loadInvoices();
-        } else if (sectionId === "allTransactionsSection") {
-            loadAllTransactions(); // Make sure this is called
-        } else if (sectionId === "ledgersSection") {
-            showLedger('cash');
-        } else if (sectionId === "businessFinanceSection") {
-            console.log("Navigating to Business Finance, forcing data reload...");
-            // Ensure transactions are loaded first as agreement calculations might depend on them
-            loadAllTransactions().then(() => { // <--- ADDED AWAIT or .then()
-                loadLenders(null, true).then(() => { // Force reload of all lenders/entities
-                    populateAgreementEntityDropdown(); 
-                    loadBusinessExternalFinanceAgreements(); // This will fetch fresh agreement data
-                });
-            });
-        } else if (sectionId === "reportsSection") {
-            loadReportDefaults();
+    modal.style.display = "block";
+}
+
+function closeRepayLoanModal() {
+    const modal = document.getElementById("repayLoanModal");
+    if (modal) modal.style.display = "none";
+}
+
+async function handleLoanRepaymentSubmit(e) {
+    e.preventDefault();
+    const agreementId = document.getElementById('repay_agreement_id').value;
+    const paymentAmount = parseFloat(document.getElementById('repay_payment_amount').value);
+    const paymentType = document.querySelector('input[name="repay_payment_type"]:checked').value;
+    const paymentMethod = document.querySelector('input[name="repay_payment_method"]:checked').value;
+    const paymentDate = document.getElementById('repay_date').value;
+
+    if (isNaN(paymentAmount) || paymentAmount <= 0) {
+        alert("Please enter a valid payment amount.");
+        return;
+    }
+
+    const agreement = businessAgreementsCache.find(a => a.agreement_id == agreementId);
+    if (!agreement) {
+        alert("Could not find the loan agreement. Please refresh the page.");
+        return;
+    }
+    
+    const isLoanTaken = agreement.agreement_type === 'loan_taken_by_biz';
+    const amountSign = isLoanTaken ? -1 : 1; 
+
+    const interestCategory = isLoanTaken 
+        ? `Loan Interest Paid by Business (from ${paymentMethod})` 
+        : `Interest on Customer Loan Received (${paymentMethod})`;
+    const principalCategory = isLoanTaken 
+        ? `Loan Principal Repaid by Business (from ${paymentMethod})` 
+        : `Loan Repayment Received from Customer (${paymentMethod})`;
+    
+    const transactionPromises = [];
+
+    let interestToPay = 0;
+    let principalToPay = 0;
+
+    if (paymentType === 'interest') {
+        interestToPay = paymentAmount;
+    } else if (paymentType === 'principal') {
+        principalToPay = paymentAmount;
+    } else { // 'combined' logic
+        const interestDue = Math.abs(parseFloat(agreement.interest_payable || 0));
+        interestToPay = Math.min(paymentAmount, interestDue);
+        principalToPay = paymentAmount - interestToPay;
+    }
+
+    if (interestToPay > 0) {
+        const interestTx = {
+            lender_id: agreement.lender_id,
+            agreement_id: agreementId,
+            amount: amountSign * interestToPay,
+            description: `Interest payment for loan with ${agreement.lender_name}`,
+            category: interestCategory,
+            date: paymentDate
+        };
+        transactionPromises.push(apiFetch(`${API}/transactions`, {
+            method: 'POST',
+            body: JSON.stringify(interestTx)
+        }));
+    }
+    
+    if (principalToPay > 0) {
+        const principalTx = {
+            lender_id: agreement.lender_id,
+            agreement_id: agreementId,
+            amount: amountSign * principalToPay,
+            description: `Principal payment for loan with ${agreement.lender_name}`,
+            category: principalCategory,
+            date: paymentDate
+        };
+        transactionPromises.push(apiFetch(`${API}/transactions`, {
+            method: 'POST',
+            body: JSON.stringify(principalTx)
+        }));
+    }
+
+    if (transactionPromises.length === 0) {
+        alert("No payment amount to process. Please enter an amount.");
+        return;
+    }
+
+    try {
+        const responses = await Promise.all(transactionPromises);
+        for (const res of responses) {
+            if (!res || !res.ok) {
+                const result = await res.json();
+                throw new Error(result.error || `A transaction failed: ${res.statusText}`);
+            }
         }
-    }
-    document.getElementById("globalSearchResults").style.display = "none";
-    const globalSearchInputElem = document.getElementById("globalSearchInput");
-    if (globalSearchInputElem) globalSearchInputElem.value = "";
+        
+        alert("Loan payment(s) processed successfully!");
+        closeRepayLoanModal();
+        
+        await loadAllTransactions(); 
+        await loadBusinessExternalFinanceAgreements(); 
+        
+        const cashLedgerActive = document.getElementById("cashLedgerContent")?.style.display !== 'none';
+        const bankLedgerActive = document.getElementById("bankLedgerContent")?.style.display !== 'none';
+        if (cashLedgerActive) loadCashLedger();
+        if (bankLedgerActive) loadBankLedger();
 
-    if (window.innerWidth <= 992) {
-        const sidebar = document.getElementById('sidebar');
-        if (sidebar) sidebar.classList.remove('open');
+    } catch (error) {
+        console.error("Error processing loan repayment:", error);
+        alert("Error processing payment: " + error.message);
     }
+}
+
+function openLoanDetailsModal(agreementId) {
+    const modal = document.getElementById("loanDetailsModal");
+    if (!modal) return;
+
+    const agreement = businessAgreementsCache.find(a => a.agreement_id === agreementId);
+    if (!agreement) {
+        alert("Could not find agreement details. Please refresh.");
+        return;
+    }
+
+    // Populate Modal Title and Header
+    document.getElementById('loanDetailsTitle').textContent = `Details for Loan with ${agreement.lender_name}`;
+    document.getElementById('loanDetailsHeaderInfo').innerHTML = `
+        <strong>Type:</strong> ${agreement.agreement_type.replace(/_/g, ' ')} | 
+        <strong>Principal:</strong> ₹${parseFloat(agreement.total_amount).toFixed(2)} | 
+        <strong>Interest Rate:</strong> ${agreement.interest_rate}% p.m.
+    `;
+
+    // Populate Monthly Interest Breakdown Table
+    const interestTableBody = document.getElementById('loanInterestBreakdownTableBody');
+    interestTableBody.innerHTML = '';
+    if (agreement.monthly_breakdown && agreement.monthly_breakdown.length > 0) {
+        agreement.monthly_breakdown.forEach(item => {
+            const row = interestTableBody.insertRow();
+            row.insertCell().textContent = item.month;
+            const dueCell = row.insertCell();
+            dueCell.textContent = parseFloat(item.interest_due).toFixed(2);
+            dueCell.className = 'num';
+            const statusCell = row.insertCell();
+            statusCell.innerHTML = `<span class="status-badge status-${item.status.toLowerCase()}">${item.status}</span>`;
+        });
+    } else {
+        interestTableBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No monthly interest data available.</td></tr>';
+    }
+
+    // Populate Payment History Table
+    const paymentHistoryTableBody = document.getElementById('loanPaymentHistoryTableBody');
+    paymentHistoryTableBody.innerHTML = '';
+    const relatedTransactions = allTransactionsCache
+        .filter(tx => tx.agreement_id === agreementId)
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    if (relatedTransactions.length > 0) {
+        relatedTransactions.forEach(tx => {
+            const row = paymentHistoryTableBody.insertRow();
+            row.insertCell().textContent = new Date(tx.date).toLocaleDateString();
+            row.insertCell().textContent = tx.category;
+            const amountCell = row.insertCell();
+            const amount = parseFloat(tx.amount);
+            amountCell.textContent = Math.abs(amount).toFixed(2);
+            amountCell.className = 'num';
+        });
+    } else {
+        paymentHistoryTableBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No payment transactions found for this agreement.</td></tr>';
+    }
+
+    modal.style.display = 'block';
+}
+
+function closeLoanDetailsModal() {
+    const modal = document.getElementById("loanDetailsModal");
+    if (modal) modal.style.display = "none";
 }

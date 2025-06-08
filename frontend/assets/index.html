@@ -1,5 +1,3 @@
---- START OF FILE index.html ---
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -10,6 +8,9 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="/css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <!-- The script tag is now correctly placed in the head -->
+  <script src="/js/script.js"></script>
 </head>
 <body>
   <div class="app-container">
@@ -34,7 +35,7 @@
       </nav>
        <div class="sidebar-footer">
         <a href="#" class="nav-item"><i class="fas fa-cog"></i> Settings</a>
-        <a href="#" class="nav-item"><i class="fas fa-sign-out-alt"></i> Logout</a>
+        <a href="#" class="nav-item" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</a>
       </div>
     </aside>
 
@@ -75,7 +76,6 @@
           </table>
         </div>
 
-        <!-- Enhanced Dashboard Analytics -->
         <section class="app-section active-section" id="dashboardAnalytics">
           <div class="dashboard-header">
             <div>
@@ -84,12 +84,12 @@
             </div>
             <div class="dashboard-controls">
               <select id="dashboardPeriod" class="form-control-sm" onchange="updateDashboardPeriod()">
-                <option value="7">Last 7 days</option>
-                <option value="30" selected>Last 30 days</option>
-                <option value="90">Last 90 days</option>
-                <option value="365">Last Year</option>
+                <option value="this_month" selected>This Month</option>
+                <option value="last_month">Last Month</option>
+                <option value="this_quarter">This Quarter</option>
+                <option value="this_year">This Year</option>
               </select>
-              <button class="btn btn-secondary btn-sm"><i class="fas fa-download"></i> Export</button>
+              <button class="btn btn-secondary btn-sm" onclick="alert('Export functionality not yet implemented.')"><i class="fas fa-download"></i> Export</button>
             </div>
           </div>
 
@@ -116,7 +116,7 @@
               <div class="kpi-content">
                 <h3>Total Products</h3>
                 <div class="kpi-value" id="totalProducts">0</div>
-                <div class="kpi-subtext" id="lowStockAlert">0 low stock</div>
+                <div class="kpi-subtext" id="lowStockAlert" style="cursor:pointer;" onclick="showLowStockProducts()">0 low stock</div>
               </div>
             </div>
             <div class="kpi-card">
@@ -124,7 +124,7 @@
               <div class="kpi-content">
                 <h3>Pending Amount</h3>
                 <div class="kpi-value" id="pendingAmount">₹0</div>
-                <div class="kpi-subtext" id="pendingInvoices">0 invoices</div>
+                <div class="kpi-subtext" id="pendingInvoices" style="cursor:pointer;" onclick="navigateToSection('invoiceManagementSection')">0 invoices</div>
               </div>
             </div>
           </div>
@@ -147,7 +147,7 @@
 
             <div class="dashboard-column">
               <div class="chart-container category-chart-container">
-                <div class="chart-header"><h3>Top Selling Products</h3> <a href="#" class="view-all-link">View all</a></div>
+                <div class="chart-header"><h3>Top Selling Products</h3> <a href="#" class="view-all-link" onclick="generateAndDisplayReport('top_products'); navigateToSection('reportsSection'); return false;">View all</a></div>
                 <div class="chart-canvas-wrapper" style="min-height: 150px; display:flex; align-items:center; justify-content:center;">
                   <p id="topSellingPlaceholder" class="text-muted">No product sales data available</p>
                   <canvas id="categoryChart" style="display:none;"></canvas>
@@ -160,7 +160,6 @@
                   <a href="#" class="view-all-link" onclick="navigateToSection('allTransactionsSection'); return false;">View all</a>
                 </div>
                 <div class="activity-list" id="recentActivityList">
-                  <!-- Activity items will be populated here -->
                    <div class="activity-item-placeholder">No transactions available</div>
                 </div>
               </div>
@@ -179,20 +178,32 @@
                 <h3>System Status</h3>
                 <div class="system-status-item"><span>Database</span><span class="status-indicator operational">Operational</span></div>
                 <div class="system-status-item"><span>API</span><span class="status-indicator operational">Operational</span></div>
-                <div class="system-status-item"><span>Storage</span><span class="status-indicator warning">High Usage</span></div>
+                <div class="system-status-item"><span>Storage</span><span class="status-indicator warning" onclick="alert('Storage usage is high. Consider backups and cleanup.')" style="cursor:pointer;">High Usage</span></div>
             </div>
           </div>
-
         </section>
 
-        <section id="customerManagementSection" class="app-section table-container" style="display: none;">
-          <h2>Customer Management</h2>
-          <button class="btn btn-primary" onclick="openUserModal()">+ Add New Customer</button>
-          <table id="customerTable">
-            <thead><tr><th>ID</th><th>Name</th><th>Opening Bal. (₹)</th><th>Current Receivable (₹)</th><th>Loan Outstanding (₹)</th><th>Chit Net Position (₹)</th><th>Joined</th><th>Actions</th></tr></thead>
-            <tbody id="customerTableBody"></tbody>
-          </table>
-        </section>
+        <!-- In index.html -->
+<section id="customerManagementSection" class="app-section table-container" style="display: none;">
+  <h2>Customer Management</h2>
+  <button class="btn btn-primary" onclick="openUserModal()">+ Add New Customer</button>
+  <table id="customerTable">
+    <thead>
+      <tr>
+        <!-- THIS IS THE CHANGE -->
+        <th>S.No.</th>
+        <th>Name</th>
+        <th>Opening Bal. (₹)</th>
+        <th>Current Receivable (₹)</th>
+        <th>Loan Outstanding (₹)</th>
+        <th>Chit Net Position (₹)</th>
+        <th>Joined</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="customerTableBody"></tbody>
+  </table>
+</section>
 
         <section id="supplierManagementSection" class="app-section table-container" style="display: none;">
           <h2>Supplier Management</h2>
@@ -310,17 +321,57 @@
           </table>
         </section>
 
-        <section id="reportsSection" class="app-section table-container" style="display: none;">
-          <h2>Financial Reports</h2>
-          <div class="report-controls">
-            <select id="reportType" class="form-control-sm"><option value="balance_summary">Balance Summary</option><option value="daily_summary">Daily Summary</option><option value="transaction_analytics">Transaction Analytics</option><option value="user_history">User History</option></select>
-            <input type="month" id="reportMonth" class="form-control-sm">
-            <div id="dailyReportControls" style="display: none;"><input type="date" id="reportDate" class="form-control-sm"></div>
-            <button onclick="generateReport()" class="btn btn-primary btn-sm">Generate</button>
+        <section id="reportsSection" class="app-section" style="display: none;">
+          <div class="report-header">
+              <h2>Reports & Analytics</h2>
+              <div class="report-main-controls">
+                  <label for="reportPeriodMonth">Select Period:</label>
+                  <input type="month" id="reportPeriodMonth" class="form-control-sm">
+              </div>
           </div>
-          <div id="reportResults"></div>
+        
+          <div class="report-card-grid">
+              <div class="report-card-item" onclick="generateAndDisplayReport('turnover_report')">
+                <div class="rc-icon" style="background-color: #007bff;"><i class="fas fa-chart-line"></i></div>
+                <div class="rc-content">
+                    <h4>Turnover Report</h4>
+                    <p>Track your gross sales performance over the selected period.</p>
+                </div>
+              </div>
+              <div class="report-card-item" onclick="generateAndDisplayReport('pnl_summary')">
+                  <div class="rc-icon pnl"><i class="fas fa-balance-scale"></i></div>
+                  <div class="rc-content">
+                      <h4>Profit & Loss Summary</h4>
+                      <p>Analyze your revenue, costs, and profitability.</p>
+                  </div>
+              </div>
+              <div class="report-card-item" onclick="generateAndDisplayReport('cash_flow')">
+                  <div class="rc-icon cashflow"><i class="fas fa-exchange-alt"></i></div>
+                  <div class="rc-content">
+                      <h4>Cash Flow Analysis</h4>
+                      <p>Track your monthly income vs. expenses.</p>
+                  </div>
+              </div>
+              <div class="report-card-item" onclick="generateAndDisplayReport('top_customers')">
+                  <div class="rc-icon customers"><i class="fas fa-star"></i></div>
+                  <div class="rc-content">
+                      <h4>Top Customers</h4>
+                      <p>Identify your most valuable customers by revenue.</p>
+                  </div>
+              </div>
+              <div class="report-card-item" onclick="generateAndDisplayReport('top_products')">
+                  <div class="rc-icon products"><i class="fas fa-trophy"></i></div>
+                  <div class="rc-content">
+                      <h4>Top Selling Products</h4>
+                      <p>See which products are your best performers.</p>
+                  </div>
+              </div>
+          </div>
+        
+          <div id="reportDisplayArea" class="report-display-container" style="display:none;">
+              <!-- Report content will be injected here by JavaScript -->
+          </div>
         </section>
-
       </main>
     </div>
   </div>
@@ -454,9 +505,28 @@
     </div>
 </div>
 
-  <div id="businessChitLoanAgreementModal" class="modal"><div class="modal-content"><span class="close" onclick="closeBusinessChitLoanAgreementModal()">×</span><h2 id="businessChitLoanAgreementModalTitle">New Business Finance Agreement</h2><form id="businessChitLoanAgreementForm"><input type="hidden" id="agreementId"><div class="form-group"><label for="agreement_entity_id">With External Entity:</label><select id="agreement_entity_id" class="form-control" required></select></div><div class="form-group"><label for="agreement_type">Agreement Type:</label><select id="agreement_type" class="form-control" required><option value="">Select Type...</option><option value="chit_participation">Chit Fund Participation (Biz)</option><option value="loan_taken_by_biz">Loan Taken by Business</option><option value="loan_given_by_biz">Loan Given by Business</option></select></div><div class="form-group"><label for="agreement_total_amount">Total Chit Value / Loan Principal (₹):</label><input id="agreement_total_amount" type="number" step="0.01" class="form-control" required /></div> <div class="form-group"><label for="agreement_interest_rate">Interest Rate (% p.a.):</label><input id="agreement_interest_rate" type="number" step="0.01" class="form-control" placeholder="e.g., 12.5" /></div> <div class="form-group"><label for="agreement_start_date">Start Date:</label><input id="agreement_start_date" type="date" class="form-control" required /></div><div class="form-group"><textarea id="agreement_details" class="form-control" placeholder="Details (e.g., Chit Group ID, Loan Terms, Installment Amt)"></textarea></div><button type="submit" class="btn btn-primary">Save Agreement</button></form></div></div>
+  <div id="businessChitLoanAgreementModal" class="modal"><div class="modal-content"><span class="close" onclick="closeBusinessChitLoanAgreementModal()">×</span><h2 id="businessChitLoanAgreementModalTitle">New Business Finance Agreement</h2><form id="businessChitLoanAgreementForm"><input type="hidden" id="agreementId"><div class="form-group"><label for="agreement_entity_id">With External Entity:</label><select id="agreement_entity_id" class="form-control" required></select></div><div class="form-group"><label for="agreement_type">Agreement Type:</label><select id="agreement_type" class="form-control" required><option value="">Select Type...</option><option value="chit_participation">Chit Fund Participation (Biz)</option><option value="loan_taken_by_biz">Loan Taken by Business</option><option value="loan_given_by_biz">Loan Given by Business</option></select></div><div class="form-group"><label for="agreement_total_amount">Total Chit Value / Loan Principal (₹):</label><input id="agreement_total_amount" type="number" step="0.01" class="form-control" required /></div> <div class="form-group"><label for="agreement_interest_rate">Interest Rate (% p.m.):</label><input id="agreement_interest_rate" type="number" step="0.01" class="form-control" placeholder="e.g., 5" /></div> <div class="form-group"><label for="agreement_start_date">Start Date:</label><input id="agreement_start_date" type="date" class="form-control" required /></div><div class="form-group"><textarea id="agreement_details" class="form-control" placeholder="Details (e.g., Chit Group ID, Loan Terms, Installment Amt)"></textarea></div><button type="submit" class="btn btn-primary">Save Agreement</button></form></div></div>
   
   <div id="userTransactionHistoryModal" class="modal"><div class="modal-content" style="max-width: 800px;"><span class="close" onclick="closeUserTransactionHistoryModal()">×</span><h2 id="userTransactionHistoryModalTitle">Transaction History</h2><div class="filter-controls"><label for="userTxHistoryCategoryFilter">Filter by Category Group:</label><select id="userTxHistoryCategoryFilter" class="form-control-sm"><option value="all">All Transactions</option><option value="customer_revenue">Sales/Service Revenue</option><option value="customer_payment">Payments from Customer</option><option value="customer_loan">Customer Loans</option><option value="customer_chit">Customer Chits</option></select></div><table id="userTransactionHistoryTable"><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount (₹)</th></tr></thead><tbody id="userTransactionHistoryTableBody"></tbody></table></div></div>
+
+  <div id="entityTransactionHistoryModal" class="modal">
+    <div class="modal-content" style="max-width: 800px;">
+      <span class="close" onclick="closeEntityTransactionHistoryModal()">×</span>
+      <h2 id="entityTransactionHistoryModalTitle">Transaction History</h2>
+      <table id="entityTransactionHistoryTable">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Category</th>
+            <th>Description</th>
+            <th>Amount (₹)</th>
+            <th>Related To (User/Entity)</th>
+          </tr>
+        </thead>
+        <tbody id="entityTransactionHistoryTableBody"></tbody>
+      </table>
+    </div>
+  </div>
 
   <div id="productModal" class="modal">
     <div class="modal-content" style="max-width: 700px;">
@@ -627,6 +697,94 @@
     </div>
   </div>
 
-  <script src="/js/script.js"></script>
+  <div id="repayLoanModal" class="modal">
+    <div class="modal-content" style="max-width: 550px;">
+      <span class="close" onclick="closeRepayLoanModal()">×</span>
+      <h2 id="repayLoanModalTitle">Repay Loan</h2>
+      <form id="repayLoanForm">
+        <input type="hidden" id="repay_agreement_id">
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label>Outstanding Principal (₹):</label>
+                <p class="cumulative-paid-display" id="repay_outstanding_principal">0.00</p>
+            </div>
+            <div class="form-group">
+                <label>Accrued Interest Payable (₹):</label>
+                <p class="cumulative-paid-display" id="repay_interest_payable">0.00</p>
+            </div>
+        </div>
+  
+        <div class="form-group">
+            <label for="repay_payment_amount">Payment Amount (₹)*</label>
+            <input type="number" id="repay_payment_amount" class="form-control" step="0.01" min="0.01" required>
+        </div>
+  
+        <div class="form-group">
+            <label>How to apply this payment?</label>
+            <div class="radio-group" style="justify-content: space-around;">
+                <div><input type="radio" name="repay_payment_type" id="repay_type_combined" value="combined" onchange="toggleRepayOptions()" checked><label for="repay_type_combined">Combined (Interest First)</label></div>
+                <div><input type="radio" name="repay_payment_type" id="repay_type_interest" value="interest" onchange="toggleRepayOptions()"><label for="repay_type_interest">Interest Only</label></div>
+                <div><input type="radio" name="repay_payment_type" id="repay_type_principal" value="principal" onchange="toggleRepayOptions()"><label for="repay_type_principal">Principal Only</label></div>
+            </div>
+        </div>
+  
+        <div class="form-group">
+            <label>Payment Method*</label>
+            <div class="radio-group">
+                 <div><input type="radio" name="repay_payment_method" id="repay_method_bank" value="Bank" checked><label for="repay_method_bank">From Bank</label></div>
+                 <div><input type="radio" name="repay_payment_method" id="repay_method_cash" value="Cash"><label for="repay_method_cash">From Cash</label></div>
+            </div>
+        </div>
+  
+        <div class="form-group">
+            <label for="repay_date">Payment Date*</label>
+            <input type="date" id="repay_date" class="form-control" required>
+        </div>
+        
+        <button type="submit" class="btn btn-success">Process Payment</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="loanDetailsModal" class="modal">
+    <div class="modal-content" style="max-width: 750px;">
+        <span class="close" onclick="closeLoanDetailsModal()">×</span>
+        <h2 id="loanDetailsTitle">Loan Details</h2>
+        <div id="loanDetailsHeaderInfo" style="margin-bottom: 15px; background-color: #f8f9fa; padding: 10px; border-radius: 6px;">
+        </div>
+
+        <h3 class="modal-subtitle">Monthly Interest Breakdown</h3>
+        <div class="table-container modal-table-container">
+            <table id="loanInterestBreakdownTable">
+                <thead>
+                    <tr>
+                        <th>Month</th>
+                        <th class="num">Interest Due (₹)</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="loanInterestBreakdownTableBody">
+                </tbody>
+            </table>
+        </div>
+
+        <h3 class="modal-subtitle">Payment History</h3>
+        <div class="table-container modal-table-container">
+            <table id="loanPaymentHistoryTable">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Category</th>
+                        <th class="num">Amount (₹)</th>
+                    </tr>
+                </thead>
+                <tbody id="loanPaymentHistoryTableBody">
+                </tbody>
+            </table>
+        </div>
+    </div>
+  </div>
+
 </body>
 </html>

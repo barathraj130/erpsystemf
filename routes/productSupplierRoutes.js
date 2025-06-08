@@ -3,6 +3,53 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
+// --- NEW HELPER FUNCTION TO CREATE THE MISSING TRANSACTION ---
+// This function will be called automatically when a preferred supplier is set.
+async function createInitialStockTransaction(productId, supplierId, purchasePrice) {
+    return new Promise((resolve, reject) => {
+        db.get('SELECT current_stock FROM products WHERE id = ?', [productId], (err, product) => {
+            if (err) return reject(new Error('Failed to find product for stock check.'));
+            if (!product || product.current_stock <= 0) {
+                // No stock, so no transaction needed.
+                return resolve();
+            }
+
+            const stockValue = product.current_stock * purchasePrice;
+            if (stockValue <= 0) {
+                // No value, no transaction needed.
+                return resolve();
+            }
+
+            // Check if an initial stock transaction already exists for this product to prevent duplicates
+            const checkSql = `SELECT id FROM transactions WHERE category = 'Initial Stock Purchase (On Credit)' AND description LIKE ?`;
+            const checkDesc = `Initial stock value for product ID ${productId}%`;
+
+            db.get(checkSql, [checkDesc], (err, existingTx) => {
+                if (err) return reject(new Error('Failed to check for existing initial stock transaction.'));
+                
+                if (existingTx) {
+                    // Transaction already exists, do nothing.
+                    console.log(`[AUTO-TX] Initial stock transaction for product ${productId} already exists. Skipping.`);
+                    return resolve();
+                }
+
+                // No existing transaction, so create one.
+                const insertSql = `INSERT INTO transactions (lender_id, amount, description, category, date) VALUES (?, ?, ?, ?, ?)`;
+                const description = `Initial stock value for product ID ${productId} from supplier ID ${supplierId}`;
+                const category = 'Initial Stock Purchase (On Credit)';
+                const date = new Date().toISOString().split('T')[0]; // Use today's date
+
+                db.run(insertSql, [supplierId, stockValue, description, category, date], function(err) {
+                    if (err) return reject(new Error('Failed to create initial stock transaction.'));
+                    console.log(`[AUTO-TX] Automatically created initial stock purchase transaction ID: ${this.lastID} for product ${productId}`);
+                    resolve();
+                });
+            });
+        });
+    });
+}
+
+
 // Get all suppliers for a specific product
 router.get('/product/:productId', (req, res) => {
     const { productId } = req.params;
@@ -63,7 +110,7 @@ router.get('/supplier/:supplierId', (req, res) => {
 });
 
 
-// Link a supplier to a product
+// Link a supplier to a product (MODIFIED TO BE SMARTER)
 router.post('/', (req, res) => {
     const { 
         product_id, supplier_id, supplier_sku, 
@@ -73,7 +120,8 @@ router.post('/', (req, res) => {
     if (!product_id || !supplier_id) {
         return res.status(400).json({ error: "Product ID and Supplier ID are required." });
     }
-    if (purchase_price !== undefined && (purchase_price === null || isNaN(parseFloat(purchase_price)))) {
+    const finalPurchasePrice = purchase_price ? parseFloat(purchase_price) : 0;
+    if (isNaN(finalPurchasePrice)) {
         return res.status(400).json({ error: "Purchase price must be a valid number if provided." });
     }
 
@@ -82,11 +130,11 @@ router.post('/', (req, res) => {
                  VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`;
     db.run(sql, [
         product_id, supplier_id, supplier_sku || null, 
-        purchase_price ? parseFloat(purchase_price) : null, 
+        finalPurchasePrice, 
         lead_time_days ? parseInt(lead_time_days) : null,
         is_preferred ? 1 : 0,
         notes || null
-    ], function(err) {
+    ], async function(err) {
         if (err) {
             if (err.message.includes("UNIQUE constraint failed")) {
                 return res.status(400).json({ error: "This product is already linked to this supplier." });
@@ -94,18 +142,32 @@ router.post('/', (req, res) => {
             console.error("Error linking product to supplier:", err.message);
             return res.status(500).json({ error: "Failed to link product to supplier." });
         }
+
+        // --- AUTOMATION LOGIC ---
+        // If this new link is for a preferred supplier, create the initial stock transaction.
+        if (is_preferred && finalPurchasePrice > 0) {
+            try {
+                await createInitialStockTransaction(product_id, supplier_id, finalPurchasePrice);
+            } catch (autoTxErr) {
+                console.error("Critical error in automated transaction creation:", autoTxErr.message);
+                // The link was saved, but we should warn the user.
+                return res.status(500).json({ error: "Link saved, but failed to create automated stock transaction. Please check logs."});
+            }
+        }
+        
         res.status(201).json({ id: this.lastID, message: "Product linked to supplier successfully." });
     });
 });
 
-// Update a product-supplier link
+// Update a product-supplier link (MODIFIED TO BE SMARTER)
 router.put('/:productSupplierId', (req, res) => {
     const { productSupplierId } = req.params;
     const { 
         supplier_sku, purchase_price, lead_time_days, is_preferred, notes 
     } = req.body;
 
-    if (purchase_price !== undefined && (purchase_price === null || isNaN(parseFloat(purchase_price)))) {
+    const finalPurchasePrice = purchase_price ? parseFloat(purchase_price) : 0;
+    if (isNaN(finalPurchasePrice)) {
         return res.status(400).json({ error: "Purchase price must be a valid number if provided." });
     }
     
@@ -114,12 +176,12 @@ router.put('/:productSupplierId', (req, res) => {
                  WHERE id = ?`;
     db.run(sql, [
         supplier_sku || null, 
-        purchase_price ? parseFloat(purchase_price) : null, 
+        finalPurchasePrice, 
         lead_time_days ? parseInt(lead_time_days) : null,
         is_preferred ? 1 : 0,
         notes || null,
         productSupplierId
-    ], function(err) {
+    ], async function(err) {
         if (err) {
             console.error("Error updating product-supplier link:", err.message);
             return res.status(500).json({ error: "Failed to update product-supplier link." });
@@ -127,7 +189,27 @@ router.put('/:productSupplierId', (req, res) => {
         if (this.changes === 0) {
             return res.status(404).json({ error: "Product-supplier link not found." });
         }
-        res.json({ message: "Product-supplier link updated successfully." });
+
+        // --- AUTOMATION LOGIC ---
+        // If the update resulted in this supplier becoming preferred, create the transaction.
+        if (is_preferred && finalPurchasePrice > 0) {
+            // We need the product_id and supplier_id for the helper function
+            db.get('SELECT product_id, supplier_id FROM product_suppliers WHERE id = ?', [productSupplierId], async (e, link) => {
+                if (e || !link) {
+                    console.error('Could not find link details after update for auto-tx.');
+                    return res.json({ message: "Product-supplier link updated successfully (auto-tx skipped)." });
+                }
+                try {
+                    await createInitialStockTransaction(link.product_id, link.supplier_id, finalPurchasePrice);
+                } catch (autoTxErr) {
+                    console.error("Critical error in automated transaction creation:", autoTxErr.message);
+                    return res.status(500).json({ error: "Link updated, but failed to create automated stock transaction. Please check logs."});
+                }
+                 res.json({ message: "Product-supplier link updated successfully." });
+            });
+        } else {
+             res.json({ message: "Product-supplier link updated successfully." });
+        }
     });
 });
 

@@ -1,7 +1,7 @@
 // --- START OF FULL FILE businessAgreementRoutes.js ---
 const express = require('express');
 const router = express.Router();
-const db = require('../db'); // Assuming your db connection is in ../db.js
+const db = require('../db');
 
 router.get('/', async (req, res) => {
     console.log('[API] GET /api/business-agreements request received.');
@@ -18,123 +18,114 @@ router.get('/', async (req, res) => {
             console.error("❌ [API DB Error] Error fetching business agreements from DB:", err.message);
             return res.status(500).json({ error: "Database error while fetching business agreements.", details: err.message });
         }
-        console.log(`[API] Initial agreements fetched: ${rows ? rows.length : 0}`);
-
+        
         if (!rows || rows.length === 0) {
-            console.log("✅ [API DB Success] No business agreements found.");
             return res.json([]);
         }
 
-        const agreementsWithCalculations = await Promise.all(rows.map(async (agreement) => {
-            console.log(`[API] Processing agreement ID: ${agreement.agreement_id}, Type: ${agreement.agreement_type}`);
-            let interest_payable = 0;
-            let calculated_principal_paid = 0; // For loan_taken_by_biz (principal paid by biz)
-            let calculated_principal_received = 0; // For loan_given_by_biz (principal received by biz)
-            // Interest paid/received will be factored into interest_payable/receivable
+        const agreementsWithCalculations = [];
+        for (const agreement of rows) {
+            let result = { ...agreement };
 
-            if (agreement.agreement_type === 'loan_taken_by_biz' && agreement.interest_rate > 0) {
-                const principal = parseFloat(agreement.total_amount);
-                const rate = parseFloat(agreement.interest_rate) / 100; // Annual rate
-                const startDate = new Date(agreement.start_date);
-                const today = new Date();
+            if (agreement.agreement_type === 'loan_taken_by_biz' || agreement.agreement_type === 'loan_given_by_biz') {
                 
-                const timeDiff = today.getTime() - startDate.getTime();
-                // Ensure timeDiff is not negative (e.g. if start_date is in future)
-                const timeInYears = timeDiff > 0 ? timeDiff / (1000 * 3600 * 24 * 365.25) : 0; 
-                console.log(`[API Calc] Agreement ID ${agreement.agreement_id} (Loan Taken): Principal=${principal}, Rate=${rate}, TimeInYears=${timeInYears}`);
+                let principal_repayment_category_like = '';
+                let interest_payment_category_like = '';
 
-                if (timeInYears > 0) {
-                    const simpleInterestAccrued = principal * rate * timeInYears;
-                    console.log(`[API Calc] Agreement ID ${agreement.agreement_id}: SimpleInterestAccrued=${simpleInterestAccrued}`);
-                    
-                    let interest_paid_by_biz_for_this_loan = 0;
-                    const interestPaymentsSql = `
-                        SELECT SUM(ABS(amount)) as total_interest_paid
-                        FROM transactions
-                        WHERE agreement_id = ? 
-                          AND category LIKE 'Loan Interest Paid by Business%' 
-                          AND amount < 0
-                    `;
-                    try {
-                        const paymentRow = await new Promise((resolve, reject) => {
-                            db.get(interestPaymentsSql, [agreement.agreement_id], (payErr, payRow) => {
-                                if (payErr) reject(payErr);
-                                else resolve(payRow);
-                            });
-                        });
-                        if (paymentRow && paymentRow.total_interest_paid) {
-                            interest_paid_by_biz_for_this_loan = parseFloat(paymentRow.total_interest_paid);
-                        }
-                        console.log(`[API Calc] Agreement ID ${agreement.agreement_id}: InterestPaidByBiz=${interest_paid_by_biz_for_this_loan}`);
-                        
-                        interest_payable = simpleInterestAccrued - interest_paid_by_biz_for_this_loan;
-                        if (interest_payable < 0) interest_payable = 0; 
-
-                    } catch (payErr) {
-                        console.error("❌ [API DB Error] Error fetching interest payments for agreement ID " + agreement.agreement_id + ":", payErr.message);
-                        interest_payable = simpleInterestAccrued; // Fallback: show full accrued if payments can't be fetched
-                    }
+                if (agreement.agreement_type === 'loan_taken_by_biz') {
+                    principal_repayment_category_like = 'Loan Principal Repaid%';
+                    interest_payment_category_like = 'Loan Interest Paid%';
+                } else { // loan_given_by_biz
+                    principal_repayment_category_like = 'Loan Repayment Received from Customer%';
+                    interest_payment_category_like = 'Interest on Customer Loan Received%';
                 }
-            }
-            
-            if (agreement.agreement_type === 'loan_taken_by_biz') {
-                 const principalPaymentsSql = `
-                    SELECT SUM(ABS(amount)) as total_principal_paid
-                    FROM transactions
-                    WHERE agreement_id = ? AND category LIKE 'Loan Principal Repaid by Business%' AND amount < 0
-                `;
+                
                 try {
-                    const principalRow = await new Promise((resolve, reject) => {
-                        db.get(principalPaymentsSql, [agreement.agreement_id], (err, row) => {
-                            if(err) reject(err); else resolve(row);
+                    const allPayments = await new Promise((resolve, reject) => {
+                        const sql = `
+                            SELECT amount, date, category 
+                            FROM transactions 
+                            WHERE agreement_id = ? 
+                              AND (category LIKE ? OR category LIKE ?) 
+                            ORDER BY date ASC
+                        `;
+                        db.all(sql, [agreement.agreement_id, principal_repayment_category_like, interest_payment_category_like], (err, p_rows) => {
+                            if (err) reject(err);
+                            else resolve(p_rows || []);
                         });
                     });
-                    if (principalRow && principalRow.total_principal_paid) {
-                        calculated_principal_paid = parseFloat(principalRow.total_principal_paid);
+
+                    const principalPayments = allPayments.filter(p => p.category.startsWith(principal_repayment_category_like.replace('%', '')));
+                    const interestPayments = allPayments.filter(p => p.category.startsWith(interest_payment_category_like.replace('%', '')));
+                    
+                    let principalPaidOrReceived = principalPayments.reduce((sum, p) => sum + Math.abs(p.amount), 0);
+                    let interestPaidOrReceived = interestPayments.reduce((sum, p) => sum + Math.abs(p.amount), 0);
+                    
+                    const outstandingPrincipal = parseFloat(agreement.total_amount || 0) - principalPaidOrReceived;
+
+                    let total_accrued_interest = 0;
+                    const monthly_breakdown = [];
+
+                    if (agreement.interest_rate > 0) {
+                        const monthlyRate = parseFloat(agreement.interest_rate) / 100;
+                        
+                        let currentPrincipalForInterestCalc = parseFloat(agreement.total_amount || 0);
+                        let loopDate = new Date(agreement.start_date);
+                        const endDate = new Date();
+
+                        while (loopDate.getFullYear() < endDate.getFullYear() || (loopDate.getFullYear() === endDate.getFullYear() && loopDate.getMonth() <= endDate.getMonth())) {
+                            const monthStr = `${loopDate.getFullYear()}-${String(loopDate.getMonth() + 1).padStart(2, '0')}`;
+                            const interestDueThisMonth = currentPrincipalForInterestCalc * monthlyRate;
+                            total_accrued_interest += interestDueThisMonth;
+
+                            const interestPaymentThisMonth = interestPayments.find(p => p.date.startsWith(monthStr));
+                            let status = 'Pending';
+                            if(interestPaymentThisMonth) {
+                                status = 'Paid';
+                            } else if (new Date() > new Date(loopDate.getFullYear(), loopDate.getMonth() + 1, 0)) {
+                                // If the month has passed and no payment was found
+                                status = 'Skipped';
+                            }
+
+                            monthly_breakdown.push({
+                                month: monthStr,
+                                interest_due: parseFloat(interestDueThisMonth.toFixed(2)),
+                                status: status
+                            });
+
+                            const nextMonth = new Date(loopDate.getFullYear(), loopDate.getMonth() + 1, 1);
+                            const principalPaymentsThisMonth = principalPayments.filter(p => {
+                                const paymentDate = new Date(p.date);
+                                return paymentDate >= loopDate && paymentDate < nextMonth;
+                            });
+
+                            principalPaymentsThisMonth.forEach(p => {
+                                currentPrincipalForInterestCalc -= Math.abs(p.amount);
+                            });
+                            
+                            loopDate.setMonth(loopDate.getMonth() + 1);
+                        }
                     }
-                     console.log(`[API Calc] Agreement ID ${agreement.agreement_id} (Loan Taken): CalculatedPrincipalPaid=${calculated_principal_paid}`);
-                } catch (prinPayErr) {
-                     console.error("❌ [API DB Error] Error fetching principal payments for loan_taken_by_biz ID " + agreement.agreement_id + ":", prinPayErr.message);
-                }
-            } else if (agreement.agreement_type === 'loan_given_by_biz') {
-                // Calculate interest receivable and principal received by biz
-                // (This part needs to be built out similar to loan_taken_by_biz if you want accurate tracking for loans given)
-                console.log(`[API Calc] Agreement ID ${agreement.agreement_id} (Loan Given): Placeholder for interest receivable and principal received calculation.`);
-                // For now, we'll assume backend might send these if logic was added for GET /api/users or a similar specialized route
-                // If not, these will default to 0 from the declaration above.
-                 const principalReceivedSql = `
-                    SELECT SUM(ABS(amount)) as total_principal_received
-                    FROM transactions
-                    WHERE agreement_id = ? 
-                        AND (category LIKE 'Loan Repayment Received from Customer%' OR category LIKE 'Loan Repayment (Principal) Received%') /* Adjust category names */
-                        AND amount < 0 /* Payments received by biz are negative to customer balance */
-                `;
-                 try {
-                    const principalRow = await new Promise((resolve, reject) => {
-                        db.get(principalReceivedSql, [agreement.agreement_id], (err, row) => {
-                            if(err) reject(err); else resolve(row);
-                        });
-                    });
-                    if (principalRow && principalRow.total_principal_received) {
-                        calculated_principal_received = parseFloat(principalRow.total_principal_received);
-                    }
-                    console.log(`[API Calc] Agreement ID ${agreement.agreement_id} (Loan Given): CalculatedPrincipalReceived=${calculated_principal_received}`);
-                } catch (prinRecErr) {
-                     console.error("❌ [API DB Error] Error fetching principal payments for loan_given_by_biz ID " + agreement.agreement_id + ":", prinRecErr.message);
+                    const interest_payable_or_receivable = total_accrued_interest - interestPaidOrReceived;
+
+                    result.outstanding_principal = parseFloat(outstandingPrincipal.toFixed(2));
+                    result.interest_payable = parseFloat(interest_payable_or_receivable.toFixed(2));
+                    result.calculated_principal_paid = parseFloat(principalPaidOrReceived.toFixed(2));
+                    result.calculated_interest_paid = parseFloat(interestPaidOrReceived.toFixed(2));
+                    result.monthly_breakdown = monthly_breakdown; // Attach the new detailed breakdown
+
+                } catch (calcError) {
+                    console.error(`Error calculating details for agreement ${agreement.agreement_id}:`, calcError);
+                    result.outstanding_principal = parseFloat(agreement.total_amount || 0);
+                    result.interest_payable = 0;
+                    result.calculated_principal_paid = 0;
+                    result.calculated_interest_paid = 0;
+                    result.monthly_breakdown = [];
                 }
             }
+            agreementsWithCalculations.push(result);
+        }
 
-
-            console.log(`[API Result] Agreement ID ${agreement.agreement_id}: Final interest_payable=${interest_payable}, calculated_principal_paid=${calculated_principal_paid}, calculated_principal_received=${calculated_principal_received}`);
-            return {
-                ...agreement,
-                interest_payable: parseFloat(interest_payable.toFixed(2)),
-                calculated_principal_paid: parseFloat(calculated_principal_paid.toFixed(2)), // For loans taken by biz
-                calculated_principal_received_by_biz: parseFloat(calculated_principal_received.toFixed(2)) // For loans given by biz
-            };
-        }));
-
-        console.log("✅ [API DB Success] Successfully fetched and calculated business agreements from DB. Count:", agreementsWithCalculations.length);
         res.json(agreementsWithCalculations);
     });
 });
@@ -174,8 +165,10 @@ router.post('/', (req, res) => {
             res.status(201).json({ 
                 agreement: {
                     ...newAgreement, 
+                    outstanding_principal: newAgreement.total_amount,
                     interest_payable: 0, 
                     calculated_principal_paid: 0,
+                    calculated_interest_paid: 0,
                     calculated_principal_received_by_biz: 0 
                 }, 
                 message: 'Business agreement created successfully.' 
@@ -205,21 +198,7 @@ router.put('/:id', (req, res) => {
         }
         if (this.changes === 0) { return res.status(404).json({ message: 'Business agreement not found.' }); }
         
-        db.get(`SELECT ba.*, l.lender_name FROM business_agreements ba JOIN lenders l ON ba.lender_id = l.id WHERE ba.id = ?`, [id], (fetchErr, updatedAgreement) => {
-            if (fetchErr) {
-                 console.error("Error fetching updated agreement:", fetchErr.message);
-                 return res.json({ message: 'Business agreement updated (but failed to fetch details).' });
-            }
-            res.json({ 
-                agreement: {
-                    ...updatedAgreement, 
-                    interest_payable: 'Recalculate on next GET', 
-                    calculated_principal_paid: 'Recalculate on next GET',
-                    calculated_principal_received_by_biz: 'Recalculate on next GET'
-                }, 
-                message: 'Business agreement updated successfully.' 
-            });
-        });
+        res.json({ message: 'Business agreement updated successfully. Details will refresh on next load.' });
     });
 });
 

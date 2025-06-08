@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const dbPath = path.join(__dirname, 'db', 'database.squlite'); // adjust if needed
+const dbPath = path.join(__dirname, 'db', 'database.sqlite'); // adjust if needed
 const backupFolder = path.join(__dirname, 'backups');
 
 if (!fs.existsSync(backupFolder)) {

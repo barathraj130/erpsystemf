@@ -1,7 +1,7 @@
-
 // db.js
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const bcrypt = require('bcrypt'); // Import bcrypt for password hashing
 
 const DB_PATH = path.join(__dirname, 'database.sqlite');
 let dbInitialized = false;
@@ -31,11 +31,12 @@ function initializeDb() {
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE,
+        password TEXT, -- For login
         email TEXT,
         phone TEXT,
         company TEXT,
         initial_balance REAL DEFAULT 0,
-        role TEXT DEFAULT 'user',
+        role TEXT DEFAULT 'user', -- 'user' or 'admin'
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         address_line1 TEXT,
         address_line2 TEXT,
@@ -309,6 +310,34 @@ function initializeDb() {
         }
     });
 
+    // --- Create a default admin user if one doesn't exist ---
+    const saltRounds = 10;
+    const defaultAdminPassword = 'admin';
+
+    db.get("SELECT id FROM users WHERE username = 'admin'", [], (err, row) => {
+        if (err) {
+            console.error("❌ [db.js] Error checking for admin user:", err.message);
+        } else if (!row) {
+            console.log("ℹ️ [db.js] No admin user found, creating one...");
+            bcrypt.hash(defaultAdminPassword, saltRounds, (hashErr, hashedPassword) => {
+                if (hashErr) {
+                    console.error("❌ [db.js] Error hashing default admin password:", hashErr);
+                } else {
+                    db.run(`INSERT INTO users (username, password, role) VALUES (?, ?, ?)`, 
+                        ['admin', hashedPassword, 'admin'], 
+                        (insertErr) => {
+                            if (insertErr) {
+                                console.error("❌ [db.js] Error creating default admin user:", insertErr.message);
+                            } else {
+                                console.log("✅ [db.js] Default admin user created with username 'admin' and password 'admin'.");
+                            }
+                        }
+                    );
+                }
+            });
+        }
+    });
+
     // Drop deprecated Sales Order tables if they exist
     db.run("DROP TABLE IF EXISTS sales_order_line_items", (err) => {
         if (err) console.error("❌ [db.js] Error dropping sales_order_line_items table (might not exist, which is OK):", err.message);
@@ -322,11 +351,8 @@ function initializeDb() {
 
     // Schema Migrations/Alterations (Simplified, checks if column exists before adding)
     const migrations = [
-        // ... (keep existing migrations for users, lenders, products, invoices as they are mostly additions or safe defaults)
-        // Ensure `interest_rate` is added to `business_agreements`
         { table: 'business_agreements', column: 'interest_rate', definition: 'REAL DEFAULT 0' },
-        // Remove `payment_mode` from transactions if it was added from a previous Option B attempt
-        // (SQLite makes dropping columns hard, so this is more of a note that it's not used in Option A)
+        { table: 'users', column: 'password', definition: 'TEXT' } // Ensure password column is added
     ];
 
     migrations.forEach(mig => {
