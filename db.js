@@ -1,7 +1,7 @@
 // db.js
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
-const bcrypt = require('bcrypt'); // Import bcrypt for password hashing
+const bcrypt = require('bcryptjs'); // Import bcrypt for password hashing
 
 const DB_PATH = path.join(__dirname, 'database.sqlite');
 let dbInitialized = false;

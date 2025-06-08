@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const bcrypt = require('bcrypt'); // <-- Add this
+const bcrypt = require('bcryptjs');// <-- Add this
 const saltRounds = 10; // <-- Add this
 
 // Get all users (customers/employees)
