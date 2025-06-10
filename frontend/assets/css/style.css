@@ -548,6 +548,7 @@ label { display: block; margin-bottom: 5px; font-size: 0.85em; font-weight: 500;
 .rc-icon.cashflow { background-color: var(--info-color); }
 .rc-icon.customers { background-color: var(--accent-color); }
 .rc-icon.products { background-color: var(--primary-color); }
+.rc-icon.disclosure { background-color: #8e44ad; }
 
 .rc-content h4 {
   font-size: 1.1em;
@@ -624,3 +625,61 @@ label { display: block; margin-bottom: 5px; font-size: 0.85em; font-weight: 500;
 .status-void { background-color: #343a40; }
 .status-pending { background-color: var(--warning-color); color: var(--text-color); }
 .status-skipped { background-color: var(--danger-color); }
+
+/* Disclosure Report Specific Styles */
+.disclosure-section {
+    margin-bottom: 25px;
+    padding-bottom: 20px;
+    border-bottom: 1px dashed var(--border-color);
+}
+.disclosure-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+.disclosure-section-title {
+    font-size: 1.2em;
+    font-weight: 600;
+    color: var(--primary-color);
+    margin-bottom: 15px;
+}
+.disclosure-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 15px;
+}
+.disclosure-kpi-card {
+    background-color: var(--bg-color);
+    padding: 15px;
+    border-radius: 6px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 110px;
+}
+.disclosure-kpi-card h5 {
+    font-size: 0.8em;
+    color: var(--text-light-color);
+    margin-bottom: 5px;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+.disclosure-kpi-card .value {
+    font-size: 1.5em;
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+.disclosure-kpi-card .change {
+    font-size: 0.8em;
+    line-height: 1.2;
+}
+.disclosure-split-view {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 25px;
+}
+.disclosure-split-view h5, .disclosure-section > div > h5 {
+    font-size: 1em;
+    font-weight: 500;
+    margin-bottom: 10px;
+}

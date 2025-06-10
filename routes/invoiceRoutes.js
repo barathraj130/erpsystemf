@@ -20,6 +20,7 @@ async function createAssociatedTransactionsAndStockUpdate(invoiceId, invoiceData
 
         let saleCategoryName;
         const saleTransactionAmount = parseFloat(total_amount); 
+        let isFullDirectSale = false;
 
         // Determine Sale Transaction Category (Only if it's a new invoice AND there's a sale amount)
         if (isNewInvoice && saleTransactionAmount !== 0) {
@@ -28,8 +29,10 @@ async function createAssociatedTransactionsAndStockUpdate(invoiceId, invoiceData
             if (currentPaymentMade >= saleTransactionAmount && newPaymentMethod) { // Full payment with method
                 if (newPaymentMethod.toLowerCase() === 'cash') {
                     saleCategoryName = "Sale to Customer (Cash)";
+                    isFullDirectSale = true;
                 } else if (newPaymentMethod.toLowerCase() === 'bank') {
                     saleCategoryName = "Sale to Customer (Bank)";
+                    isFullDirectSale = true; 
                 } else {
                     console.warn(`<<<<< WARN TXN HELPER (New Invoice Sale Cat): Full payment but newPaymentMethod ('${newPaymentMethod}') is not 'cash' or 'bank'. Sale remains 'On Credit'. >>>>>`);
                 }
@@ -43,7 +46,6 @@ async function createAssociatedTransactionsAndStockUpdate(invoiceId, invoiceData
 
             const saleTransactionSql = `INSERT INTO transactions (user_id, amount, description, category, date, related_invoice_id)
                                         VALUES (?, ?, ?, ?, ?, ?)`;
-            // The amount for the "Sale" transaction is always the full invoice total (positive for the business)
             const saleTxActualAmount = saleTransactionAmount;
             const saleTransactionParams = [
                 customer_id, 
@@ -104,17 +106,16 @@ async function createAssociatedTransactionsAndStockUpdate(invoiceId, invoiceData
                     Promise.all(stockAndLineItemPromises).then(saleResolve).catch(saleReject);
                 });
             }));
-        } else if (!isNewInvoice) { // Existing invoice update
+        } else if (!isNewInvoice) { 
             console.log(`<<<<< DEBUG TXN HELPER: Existing invoice update (isNewInvoice=false). SKIPPING sale transaction recreation and associated stock updates within this helper. Original sale tx/stock should remain unless explicitly reverted by the calling PUT route. >>>>>`);
         } else if (isNewInvoice && saleTransactionAmount === 0) {
             console.log(`<<<<< DEBUG TXN HELPER: New invoice with ZERO total amount. SKIPPING sale transaction. Only payment transaction will be considered if payment_being_made_now > 0. >>>>>`);
         }
 
 
-        // PAYMENT TRANSACTION - This applies to both NEW and UPDATED invoices if a payment is made.
-        console.log(`<<<<< DEBUG TXN HELPER (Payment Tx Check): currentPaymentMade=${currentPaymentMade} >>>>>`);
-        if (currentPaymentMade > 0) {
-            console.log(`<<<<< DEBUG TXN HELPER (Payment Tx Check): Proceeding to create payment transaction. newPaymentMethod=${newPaymentMethod} >>>>>`);
+        // *** FIX: Only create a separate payment transaction if it's NOT a full direct sale ***
+        if (currentPaymentMade > 0 && !isFullDirectSale) {
+            console.log(`<<<<< DEBUG TXN HELPER (Payment Tx Check): Proceeding to create separate payment transaction. newPaymentMethod=${newPaymentMethod} >>>>>`);
             let paymentCategoryName;
             if (newPaymentMethod && newPaymentMethod.toLowerCase() === 'cash') {
                 paymentCategoryName = "Payment Received from Customer (Cash)";
@@ -122,12 +123,9 @@ async function createAssociatedTransactionsAndStockUpdate(invoiceId, invoiceData
                 paymentCategoryName = "Payment Received from Customer (Bank)";
             } else {
                 console.error(`<<<<< ERROR TXN HELPER (Payment Tx): Payment amount ${currentPaymentMade} > 0 but NO VALID newPaymentMethod provided ('${newPaymentMethod}'). Cannot create payment transaction. >>>>>`);
-                // This reject() will be caught by the route handler's try...catch
                 return reject(new Error(`Payment method ('cash' or 'bank') is required when payment_being_made_now (${currentPaymentMade}) is greater than 0. Method received: '${newPaymentMethod}'.`));
             }
             
-            // Payment received DECREASES customer's balance (liability for customer, asset/income for business)
-            // So, the transaction amount from the business perspective is NEGATIVE for the customer's account.
             const paymentTransactionActualAmount = -Math.abs(currentPaymentMade); 
             
             const paymentTransactionSql = `INSERT INTO transactions (user_id, amount, description, category, date, related_invoice_id)
@@ -151,7 +149,7 @@ async function createAssociatedTransactionsAndStockUpdate(invoiceId, invoiceData
                 });
             }));
         } else {
-            console.log(`<<<<< DEBUG TXN HELPER (Payment Tx Check): No payment being made now (currentPaymentMade=${currentPaymentMade}), SKIPPING payment transaction creation. >>>>>`);
+            console.log(`<<<<< DEBUG TXN HELPER (Payment Tx Check): No separate payment transaction needed (currentPaymentMade=${currentPaymentMade}, isFullDirectSale=${isFullDirectSale}), SKIPPING. >>>>>`);
         }
 
         Promise.all(transactionPromises)

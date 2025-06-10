@@ -1,3 +1,4 @@
+// script.js
 const API = "http://localhost:3000/api";
 let editingUserId = null;
 let editingTxnId = null;
@@ -642,9 +643,13 @@ function getPeriodDateRanges(period) {
 
 function calculatePercentageChange(current, previous) {
     if (previous === 0) {
-        return current > 0 ? 100 : 0; // Show 100% growth if starting from 0
+        if (current > 0) return 100.0;
+        return 0.0;
     }
-    return ((current - previous) / previous) * 100;
+    if (current === 0 && previous < 0) return 100.0; // From negative to zero is 100% improvement
+    if (current === 0 && previous > 0) return -100.0; // From positive to zero is 100% loss
+
+    return ((current - previous) / Math.abs(previous)) * 100;
 }
 
 // In script.js, find and replace this function
@@ -997,34 +1002,20 @@ async function loadCashLedger(date = null) {
                     (c) => c.name === t.category,
                 );
                 if (!catInfo || !catInfo.affectsLedger) return;
-                let ledgerEffectAmount = parseFloat(t.amount); 
-
+                
+                let actualCashFlow = 0;
                 if (catInfo.affectsLedger === 'cash') {
-                    if (catInfo.type.includes("income") || 
-                        (catInfo.group === "customer_payment" && ledgerEffectAmount < 0) || 
-                        (catInfo.group === "supplier_return" && ledgerEffectAmount > 0 && catInfo.name.toLowerCase().includes("cash refund")) ||
-                        (catInfo.name === "Sale to Customer (Cash)" && ledgerEffectAmount > 0) ||
-                        (catInfo.name === "Loan Received by Business (Cash)" && ledgerEffectAmount > 0)
-                    ) {
-                        openingCashBalance += Math.abs(ledgerEffectAmount);
-                    } 
-                    else if (catInfo.type.includes("expense") || 
-                             (catInfo.group === "supplier_payment" && ledgerEffectAmount < 0) || 
-                             (catInfo.group === "customer_return" && ledgerEffectAmount > 0 && catInfo.name.toLowerCase().includes("refund via cash")) ||
-                             (catInfo.name === "Purchase from Supplier (Cash)" && ledgerEffectAmount < 0) ||
-                             (catInfo.name === "Loan Disbursed to Customer (Cash)" && ledgerEffectAmount > 0) || 
-                             (catInfo.name === "Loan Principal Repaid by Business (from Cash)" && ledgerEffectAmount < 0) ||
-                             (catInfo.name === "Loan Interest Paid by Business (from Cash)" && ledgerEffectAmount < 0)
-                    ) {
-                        openingCashBalance -= Math.abs(ledgerEffectAmount);
-                    } else {
-                        openingCashBalance += ledgerEffectAmount; 
+                    if (catInfo.type.includes("income")) {
+                        actualCashFlow = Math.abs(parseFloat(t.amount));
+                    } else if (catInfo.type.includes("expense")) {
+                        actualCashFlow = -Math.abs(parseFloat(t.amount));
                     }
                 } else if (catInfo.affectsLedger === 'both_cash_out_bank_in') { 
-                    openingCashBalance -= Math.abs(ledgerEffectAmount); 
+                    actualCashFlow = -Math.abs(parseFloat(t.amount));
                 } else if (catInfo.affectsLedger === 'both_cash_in_bank_out') { 
-                    openingCashBalance += Math.abs(ledgerEffectAmount); 
+                    actualCashFlow = Math.abs(parseFloat(t.amount));
                 }
+                openingCashBalance += actualCashFlow;
             });
 
         const entries = allTransactionsCache
@@ -1055,7 +1046,6 @@ async function loadCashLedger(date = null) {
                 '<tr><td colspan="7" style="text-align:center;">No cash transactions for this day.</td></tr>';
         } else {
             entries.forEach((entry) => {
-                let ledgerEffectAmount = parseFloat(entry.amount); 
                 const catInfo = transactionCategories.find( 
                     (c) => c.name === entry.category,
                 );
@@ -1064,45 +1054,25 @@ async function loadCashLedger(date = null) {
                 let actualCashFlowForEntry = 0;
 
                 if (catInfo.affectsLedger === 'cash') {
-                     if (catInfo.type.includes("income") || 
-                        (catInfo.group === "customer_payment" && ledgerEffectAmount < 0) || 
-                        (catInfo.group === "supplier_return" && ledgerEffectAmount > 0 && catInfo.name.toLowerCase().includes("cash refund")) ||
-                        (catInfo.name === "Sale to Customer (Cash)" && ledgerEffectAmount > 0) ||
-                        (catInfo.name === "Loan Received by Business (Cash)" && ledgerEffectAmount > 0)
-                    ) {
-                        actualCashFlowForEntry = Math.abs(ledgerEffectAmount);
-                        debit = actualCashFlowForEntry.toFixed(2);
-                        dailyTotalDebits += actualCashFlowForEntry;
-                    } else if (catInfo.type.includes("expense") || 
-                             (catInfo.group === "supplier_payment" && ledgerEffectAmount < 0) || 
-                             (catInfo.group === "customer_return" && ledgerEffectAmount > 0 && catInfo.name.toLowerCase().includes("refund via cash")) ||
-                             (catInfo.name === "Purchase from Supplier (Cash)" && ledgerEffectAmount < 0) ||
-                             (catInfo.name === "Loan Disbursed to Customer (Cash)" && ledgerEffectAmount > 0) ||
-                             (catInfo.name === "Loan Principal Repaid by Business (from Cash)" && ledgerEffectAmount < 0) ||
-                             (catInfo.name === "Loan Interest Paid by Business (from Cash)" && ledgerEffectAmount < 0)
-                    ) {
-                        actualCashFlowForEntry = -Math.abs(ledgerEffectAmount);
-                        credit = Math.abs(actualCashFlowForEntry).toFixed(2);
-                        dailyTotalCredits += Math.abs(actualCashFlowForEntry);
-                    } else { 
-                        actualCashFlowForEntry = ledgerEffectAmount;
-                        if (actualCashFlowForEntry > 0) {
-                            debit = actualCashFlowForEntry.toFixed(2);
-                            dailyTotalDebits += actualCashFlowForEntry;
-                        } else {
-                            credit = Math.abs(actualCashFlowForEntry).toFixed(2);
-                            dailyTotalCredits += Math.abs(actualCashFlowForEntry);
-                        }
-                    }
+                     if (catInfo.type.includes("income")) {
+                        actualCashFlowForEntry = Math.abs(parseFloat(entry.amount));
+                     } else if (catInfo.type.includes("expense")) {
+                        actualCashFlowForEntry = -Math.abs(parseFloat(entry.amount));
+                     }
                 } else if (catInfo.affectsLedger === 'both_cash_in_bank_out') { 
-                     actualCashFlowForEntry = Math.abs(ledgerEffectAmount);
-                     debit = actualCashFlowForEntry.toFixed(2);
-                     dailyTotalDebits += actualCashFlowForEntry;
+                     actualCashFlowForEntry = Math.abs(parseFloat(entry.amount));
                 } else if (catInfo.affectsLedger === 'both_cash_out_bank_in') { 
-                    actualCashFlowForEntry = -Math.abs(ledgerEffectAmount);
+                    actualCashFlowForEntry = -Math.abs(parseFloat(entry.amount));
+                }
+                
+                if(actualCashFlowForEntry > 0) {
+                    debit = actualCashFlowForEntry.toFixed(2);
+                    dailyTotalDebits += actualCashFlowForEntry;
+                } else {
                     credit = Math.abs(actualCashFlowForEntry).toFixed(2);
                     dailyTotalCredits += Math.abs(actualCashFlowForEntry);
                 }
+
                 runningCashBalance += actualCashFlowForEntry;
 
 
@@ -1155,42 +1125,29 @@ async function loadBankLedger(date = null) {
         allTransactionsCache
             .filter((t) => new Date(t.date) < new Date(selectedDate))
             .forEach((t) => {
-                const catInfo = transactionCategories.find( // Use full original categories
+                const catInfo = transactionCategories.find( 
                     (c) => c.name === t.category,
                 );
                 if (!catInfo || !catInfo.affectsLedger) return;
-                let ledgerEffectAmount = parseFloat(t.amount); 
 
+                let actualBankFlow = 0;
                 if (catInfo.affectsLedger === 'bank') {
-                     if (catInfo.type.includes("income") || 
-                        (catInfo.group === "customer_payment" && ledgerEffectAmount < 0) || 
-                        (catInfo.group === "supplier_return" && ledgerEffectAmount > 0 && catInfo.name.toLowerCase().includes("bank refund")) ||
-                        (catInfo.name === "Sale to Customer (Bank)" && ledgerEffectAmount > 0) ||
-                        (catInfo.name === "Loan Received by Business (to Bank)" && ledgerEffectAmount > 0)
-                    ) {
-                        openingBankBalance += Math.abs(ledgerEffectAmount);
-                    } else if (catInfo.type.includes("expense") || 
-                             (catInfo.group === "supplier_payment" && ledgerEffectAmount < 0) || 
-                             (catInfo.group === "customer_return" && ledgerEffectAmount > 0 && catInfo.name.toLowerCase().includes("refund via bank")) ||
-                             (catInfo.name === "Purchase from Supplier (Bank)" && ledgerEffectAmount < 0) ||
-                             (catInfo.name === "Loan Disbursed to Customer (Bank)" && ledgerEffectAmount > 0) ||
-                             (catInfo.name === "Loan Principal Repaid by Business (from Bank)" && ledgerEffectAmount < 0) ||
-                             (catInfo.name === "Loan Interest Paid by Business (from Bank)" && ledgerEffectAmount < 0)
-                    ) {
-                        openingBankBalance -= Math.abs(ledgerEffectAmount);
-                    } else {
-                        openingBankBalance += ledgerEffectAmount;
+                    if (catInfo.type.includes("income")) {
+                         actualBankFlow = Math.abs(parseFloat(t.amount));
+                    } else if (catInfo.type.includes("expense")) {
+                        actualBankFlow = -Math.abs(parseFloat(t.amount));
                     }
                 } else if (catInfo.affectsLedger === 'both_cash_out_bank_in') { 
-                    openingBankBalance += Math.abs(ledgerEffectAmount); 
+                    actualBankFlow = Math.abs(parseFloat(t.amount));
                 } else if (catInfo.affectsLedger === 'both_cash_in_bank_out') { 
-                    openingBankBalance -= Math.abs(ledgerEffectAmount); 
+                    actualBankFlow = -Math.abs(parseFloat(t.amount));
                 }
+                openingBankBalance += actualBankFlow;
             });
 
         const entries = allTransactionsCache
             .filter((t) => {
-                const catInfo = transactionCategories.find( // Use full original categories
+                const catInfo = transactionCategories.find( 
                     (c) => c.name === t.category,
                 );
                 return (
@@ -1216,8 +1173,7 @@ async function loadBankLedger(date = null) {
                 '<tr><td colspan="7" style="text-align:center;">No bank transactions for this day.</td></tr>';
         } else {
             entries.forEach((entry) => {
-                let ledgerEffectAmount = parseFloat(entry.amount); 
-                const catInfo = transactionCategories.find( // Use full original categories
+                const catInfo = transactionCategories.find(
                     (c) => c.name === entry.category,
                 );
                 let debit = ""; 
@@ -1225,45 +1181,25 @@ async function loadBankLedger(date = null) {
                 let actualBankFlowForEntry = 0;
 
                 if (catInfo.affectsLedger === 'bank') {
-                    if (catInfo.type.includes("income") || 
-                        (catInfo.group === "customer_payment" && ledgerEffectAmount < 0) || 
-                        (catInfo.group === "supplier_return" && ledgerEffectAmount > 0 && catInfo.name.toLowerCase().includes("bank refund")) ||
-                        (catInfo.name === "Sale to Customer (Bank)" && ledgerEffectAmount > 0) ||
-                        (catInfo.name === "Loan Received by Business (to Bank)" && ledgerEffectAmount > 0)
-                    ) {
-                        actualBankFlowForEntry = Math.abs(ledgerEffectAmount);
-                        debit = actualBankFlowForEntry.toFixed(2);
-                        dailyTotalDebits += actualBankFlowForEntry;
-                    } else if (catInfo.type.includes("expense") || 
-                             (catInfo.group === "supplier_payment" && ledgerEffectAmount < 0) || 
-                             (catInfo.group === "customer_return" && ledgerEffectAmount > 0 && catInfo.name.toLowerCase().includes("refund via bank")) ||
-                             (catInfo.name === "Purchase from Supplier (Bank)" && ledgerEffectAmount < 0) ||
-                             (catInfo.name === "Loan Disbursed to Customer (Bank)" && ledgerEffectAmount > 0) ||
-                             (catInfo.name === "Loan Principal Repaid by Business (from Bank)" && ledgerEffectAmount < 0) ||
-                             (catInfo.name === "Loan Interest Paid by Business (from Bank)" && ledgerEffectAmount < 0)
-                    ) {
-                        actualBankFlowForEntry = -Math.abs(ledgerEffectAmount);
-                        credit = Math.abs(actualBankFlowForEntry).toFixed(2);
-                        dailyTotalCredits += Math.abs(actualBankFlowForEntry);
-                    } else {
-                        actualBankFlowForEntry = ledgerEffectAmount;
-                        if (actualBankFlowForEntry > 0) {
-                            debit = actualBankFlowForEntry.toFixed(2);
-                            dailyTotalDebits += actualBankFlowForEntry;
-                        } else {
-                            credit = Math.abs(actualBankFlowForEntry).toFixed(2);
-                            dailyTotalCredits += Math.abs(actualBankFlowForEntry);
-                        }
+                    if (catInfo.type.includes("income")) {
+                        actualBankFlowForEntry = Math.abs(parseFloat(entry.amount));
+                    } else if (catInfo.type.includes("expense")) {
+                        actualBankFlowForEntry = -Math.abs(parseFloat(entry.amount));
                     }
                 } else if (catInfo.affectsLedger === 'both_cash_out_bank_in') { 
-                     actualBankFlowForEntry = Math.abs(ledgerEffectAmount);
-                     debit = actualBankFlowForEntry.toFixed(2);
-                     dailyTotalDebits += actualBankFlowForEntry;
+                     actualBankFlowForEntry = Math.abs(parseFloat(entry.amount));
                 } else if (catInfo.affectsLedger === 'both_cash_in_bank_out') { 
-                    actualBankFlowForEntry = -Math.abs(ledgerEffectAmount);
+                    actualBankFlowForEntry = -Math.abs(parseFloat(entry.amount));
+                }
+
+                if(actualBankFlowForEntry > 0) {
+                    debit = actualBankFlowForEntry.toFixed(2);
+                    dailyTotalDebits += actualBankFlowForEntry;
+                } else {
                     credit = Math.abs(actualBankFlowForEntry).toFixed(2);
                     dailyTotalCredits += Math.abs(actualBankFlowForEntry);
                 }
+                
                 runningBankBalance += actualBankFlowForEntry;
 
                 let displayName = "N/A (Business Internal)";
@@ -1466,6 +1402,32 @@ function toggleTxPartyDropdowns() {
         if(userDropdown) userDropdown.value = "";
         lenderDropdown.parentElement.style.display = "block";
         if(agreementDropdown) agreementDropdown.parentElement.style.display = "block";
+    }
+}
+
+function getFullCategoryDetails(baseCategoryName, paymentMode) {
+    const baseCatInfo = baseTransactionCategories.find(c => c.name === baseCategoryName);
+    if (!baseCatInfo) return null;
+
+    if (baseCatInfo.needsPaymentMode) {
+        let mode = paymentMode || "On Credit"; 
+        let finalCategoryName = baseCatInfo.categoryPattern.replace("{PaymentMode}", mode);
+        
+        if (mode === 'On Credit') {
+             finalCategoryName = baseCatInfo.categoryPattern.replace("{PaymentMode}", "On Credit");
+        } else if (baseCatInfo.group.includes('biz_loan')) {
+             finalCategoryName = baseCatInfo.categoryPattern.replace("{PaymentModeDestination}", `(to ${mode})`).replace("{PaymentMode}", mode);
+        }
+
+        return {
+            fullCategoryName: finalCategoryName,
+            ...baseCatInfo
+        };
+    } else {
+        return {
+            fullCategoryName: baseCatInfo.categoryPattern,
+            ...baseCatInfo
+        };
     }
 }
 
@@ -2226,9 +2188,6 @@ async function deleteLender(id) {
 // In script.js
 
 // Replace the existing loadCustomerSummaries function with this corrected version
-// In script.js
-
-// Replace the existing loadCustomerSummaries function with this one
 async function loadCustomerSummaries() {
     const customerTableBody = document.getElementById("customerTableBody");
     if (!customerTableBody) return;
@@ -2248,13 +2207,11 @@ async function loadCustomerSummaries() {
             return;
         }
 
-        // --- START OF KEY CHANGES ---
-        // 1. Initialize a counter for the serial number
+        // --- FIX START ---
+        // Initialize a counter for the serial number
         let serialNumber = 1;
 
-        // 2. Iterate over the filtered 'customersOnly' array
         customersOnly.forEach((user) => {
-            // ... (all the calculation logic for receivable, loan, etc. remains the same)
             let receivable = parseFloat(user.initial_balance) || 0;
             let loanOutstanding = 0;
             let chitNetPosition = 0;
@@ -2280,8 +2237,8 @@ async function loadCustomerSummaries() {
 
             const row = customerTableBody.insertRow();
             
-            // 3. Display the serial number instead of the database ID
-            row.insertCell().textContent = serialNumber++; // Display and then increment the counter
+            // Display the serial number instead of the database ID
+            row.insertCell().textContent = serialNumber++;
 
             // The rest of the row population remains the same
             row.insertCell().textContent = user.username;
@@ -2302,7 +2259,7 @@ async function loadCustomerSummaries() {
             row.insertCell().textContent = new Date(user.created_at).toLocaleDateString();
             row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="openUserTransactionHistoryModal(${user.id}, '${user.username.replace(/'/g, "\\'")}')"><i class="fas fa-history"></i></button> <button class='btn btn-primary btn-sm' onclick='openUserModal(${JSON.stringify(user)})'><i class="fas fa-edit"></i></button> <button class='btn btn-danger btn-sm' onclick='deleteUser(${user.id})'><i class="fas fa-trash"></i></button>`;
         });
-        // --- END OF KEY CHANGES ---
+        // --- FIX END ---
 
         if (customerTableBody.rows.length === 0 && customersOnly.length > 0)
             customerTableBody.innerHTML =
@@ -4146,7 +4103,7 @@ async function printCurrentInvoice() {
         alert("Please save the invoice first or ensure an invoice is loaded in the modal to print.");
     }
 }
-
+// script.js (continued)
 
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
     try {
@@ -4479,7 +4436,7 @@ function convertAmountToWords(amount) {
         if (n < 1000000000) return (numToWords(Math.floor(n / 10000000)) + " CRORE" + (n % 10000000 !== 0 ? " " + numToWords(n % 10000000) : "")).trim();
         
         return "NUMBER TOO LARGE";
-    } // This was the missing brace
+    }
 
     if (wholePart === 0 && number === 0) return "ZERO"; 
 
@@ -4709,6 +4666,9 @@ async function generateAndDisplayReport(reportType) {
             break;
         case 'top_products':
             reportHtml = await generateTopProductsReport(period);
+            break;
+        case 'full_disclosure':
+            reportHtml = await generateFullDisclosureReport(period);
             break;
     }
     
@@ -4952,6 +4912,132 @@ async function generateTopProductsReport(period) {
         </table>
     `;
 }
+
+async function generateFullDisclosureReport(period) {
+    const [year, month] = period.split('-').map(Number);
+    const lastMonthDate = new Date(year, month - 2, 1);
+    const lastMonthPeriod = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
+    const lastYearDate = new Date(year - 1, month - 1, 1);
+    const lastYearPeriod = `${lastYearDate.getFullYear()}-${String(lastYearDate.getMonth() + 1).padStart(2, '0')}`;
+    const yearStr = String(year);
+
+    const getInvoicesForPeriod = (p) => invoicesCache.filter(inv => inv.invoice_date.startsWith(p) && inv.status !== 'Void' && inv.status !== 'Draft');
+    const getTransactionsForPeriod = (p) => allTransactionsCache.filter(tx => tx.date.startsWith(p));
+    const getNewCustomersForPeriod = (p) => usersDataCache.filter(u => u.created_at && u.created_at.startsWith(p) && u.role !== 'admin');
+
+    // Current period data
+    const currentMonthInvoices = getInvoicesForPeriod(period);
+    const currentMonthRevenue = currentMonthInvoices.reduce((sum, inv) => sum + parseFloat(inv.total_amount || 0), 0);
+    const currentMonthTxCount = getTransactionsForPeriod(period).length;
+    const currentMonthNewCustomers = getNewCustomersForPeriod(period).length;
+    const collectedRevenue = currentMonthInvoices.reduce((sum, inv) => sum + parseFloat(inv.paid_amount || 0), 0);
+    const uncollectedRevenue = currentMonthRevenue - collectedRevenue;
+    const ytdInvoices = invoicesCache.filter(inv => inv.invoice_date.startsWith(yearStr) && new Date(inv.invoice_date) <= new Date(`${period}-31`) && inv.status !== 'Void' && inv.status !== 'Draft');
+    const ytdRevenue = ytdInvoices.reduce((sum, inv) => sum + parseFloat(inv.total_amount || 0), 0);
+
+    // Last month data
+    const lastMonthInvoices = getInvoicesForPeriod(lastMonthPeriod);
+    const lastMonthRevenue = lastMonthInvoices.reduce((sum, inv) => sum + parseFloat(inv.total_amount || 0), 0);
+    const lastMonthTxCount = getTransactionsForPeriod(lastMonthPeriod).length;
+    const lastMonthNewCustomers = getNewCustomersForPeriod(lastMonthPeriod).length;
+
+    // Last year's same month data
+    const lastYearInvoices = getInvoicesForPeriod(lastYearPeriod);
+    const lastYearRevenue = lastYearInvoices.reduce((sum, inv) => sum + parseFloat(inv.total_amount || 0), 0);
+    const lastYearTxCount = getTransactionsForPeriod(lastYearPeriod).length;
+    const lastYearNewCustomers = getNewCustomersForPeriod(lastYearPeriod).length;
+
+    // Helper to generate change HTML
+    const getChangeHtml = (current, previous, label) => {
+        const change = calculatePercentageChange(current, previous);
+        return `<p class="change ${change >= 0 ? 'positive' : 'negative'}">${change.toFixed(1)}% ${label}</p>`;
+    };
+
+    // --- Sales Analysis ---
+    const topProducts = await generateTopProductsReport(period);
+    const salesByState = {};
+    for(const inv of currentMonthInvoices) {
+        if (!inv.customer_state) {
+            const cust = usersDataCache.find(u => u.id === inv.customer_id);
+            inv.customer_state = cust ? cust.state : 'Unknown';
+        }
+        const state = inv.customer_state || 'Unknown';
+        salesByState[state] = (salesByState[state] || 0) + parseFloat(inv.total_amount || 0);
+    }
+    const topStates = Object.entries(salesByState).sort((a,b) => b[1] - a[1]).slice(0, 5);
+    
+    const bestProductPerState = {};
+    for (const inv of currentMonthInvoices) {
+        const state = usersDataCache.find(u => u.id === inv.customer_id)?.state || 'Unknown';
+        if (!inv.line_items) continue;
+        for(const item of inv.line_items) {
+            if (!item.product_id) continue;
+            if (!bestProductPerState[state]) bestProductPerState[state] = {};
+            bestProductPerState[state][item.product_id] = (bestProductPerState[state][item.product_id] || 0) + parseFloat(item.quantity);
+        }
+    }
+    const topProductByStateHtml = Object.entries(bestProductPerState).map(([state, products]) => {
+        const topProductId = Object.keys(products).reduce((a, b) => products[a] > products[b] ? a : b);
+        const topProduct = productsCache.find(p => p.id == topProductId);
+        return `<tr><td>${state}</td><td>${topProduct ? topProduct.product_name : `Product ID ${topProductId}`}</td></tr>`;
+    }).join('');
+
+
+    return `
+        <h3 class="report-title">Full Disclosure Report - ${period}</h3>
+        
+        <div class="disclosure-section">
+            <h4 class="disclosure-section-title">Key Performance Indicators</h4>
+            <div class="disclosure-kpi-grid">
+                <div class="disclosure-kpi-card"><h5>Gross Revenue</h5><p class="value">₹${currentMonthRevenue.toFixed(2)}</p>${getChangeHtml(currentMonthRevenue, lastMonthRevenue, 'vs Last Month')}${getChangeHtml(currentMonthRevenue, lastYearRevenue, 'vs Last Year')}</div>
+                <div class="disclosure-kpi-card"><h5>Invoices Issued</h5><p class="value">${currentMonthInvoices.length}</p>${getChangeHtml(currentMonthInvoices.length, lastMonthInvoices.length, 'vs Last Month')}${getChangeHtml(currentMonthInvoices.length, lastYearInvoices.length, 'vs Last Year')}</div>
+                <div class="disclosure-kpi-card"><h5>New Customers</h5><p class="value">${currentMonthNewCustomers}</p>${getChangeHtml(currentMonthNewCustomers, lastMonthNewCustomers, 'vs Last Month')}${getChangeHtml(currentMonthNewCustomers, lastYearNewCustomers, 'vs Last Year')}</div>
+                <div class="disclosure-kpi-card"><h5>Transactions</h5><p class="value">${currentMonthTxCount}</p>${getChangeHtml(currentMonthTxCount, lastMonthTxCount, 'vs Last Month')}${getChangeHtml(currentMonthTxCount, lastYearTxCount, 'vs Last Year')}</div>
+            </div>
+        </div>
+
+        <div class="disclosure-section">
+            <h4 class="disclosure-section-title">Revenue Deep Dive</h4>
+            <div class="disclosure-kpi-grid">
+                <div class="disclosure-kpi-card"><h5>This Month</h5><p class="value positive">₹${currentMonthRevenue.toFixed(2)}</p></div>
+                <div class="disclosure-kpi-card"><h5>Year-to-Date</h5><p class="value positive">₹${ytdRevenue.toFixed(2)}</p></div>
+                <div class="disclosure-kpi-card"><h5>Collected (Month)</h5><p class="value positive">₹${collectedRevenue.toFixed(2)}</p></div>
+                <div class="disclosure-kpi-card"><h5>Uncollected (Month)</h5><p class="value negative">₹${uncollectedRevenue.toFixed(2)}</p></div>
+            </div>
+        </div>
+
+        <div class="disclosure-section">
+            <h4 class="disclosure-section-title">Sales Analysis</h4>
+            <div class="disclosure-split-view">
+                <div>
+                    <h5>Top 5 Selling Products (by Quantity)</h5>
+                    ${topProducts}
+                </div>
+                <div>
+                    <h5>Top 5 States (by Revenue)</h5>
+                    <table>
+                        <thead><tr><th>State</th><th class="num">Total Revenue</th></tr></thead>
+                        <tbody>${topStates.map(([state, total]) => `<tr><td>${state}</td><td class="num positive">₹${total.toFixed(2)}</td></tr>`).join('') || `<tr><td colspan="2">No sales data.</td></tr>`}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <div class="disclosure-section">
+             <h4 class="disclosure-section-title">Regional Product Performance</h4>
+             <div>
+                <h5>Top Selling Product by State</h5>
+                <table>
+                    <thead><tr><th>State</th><th>Best Selling Product</th></tr></thead>
+                    <tbody>${topProductByStateHtml || '<tr><td colspan="2">No data available for this period.</td></tr>'}</tbody>
+                </table>
+             </div>
+        </div>
+    `;
+}
+
+
+
 
 // --- DASHBOARD CHARTS AND ACTIVITY ---
 function initializeDashboardCharts() {
@@ -5386,6 +5472,13 @@ function openRepayLoanModal(agreementId) {
     toggleRepayOptions();
 
     modal.style.display = "block";
+}
+
+// *** FIX: This function was missing ***
+function toggleRepayOptions() {
+    // This function can be expanded later if needed, but for now,
+    // its existence is enough to prevent the error.
+    console.log("toggleRepayOptions called."); 
 }
 
 function closeRepayLoanModal() {

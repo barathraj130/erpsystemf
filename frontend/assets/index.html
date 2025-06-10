@@ -183,14 +183,17 @@
           </div>
         </section>
 
-        <!-- In index.html -->
 <section id="customerManagementSection" class="app-section table-container" style="display: none;">
-  <h2>Customer Management</h2>
-  <button class="btn btn-primary" onclick="openUserModal()">+ Add New Customer</button>
+  <div class="section-header">
+      <h2>Customer Management</h2>
+      <div class="section-actions">
+          <button class="btn btn-secondary" onclick="exportCustomers()"><i class="fas fa-file-csv"></i> Export to CSV</button>
+          <button class="btn btn-primary" onclick="openUserModal()">+ Add New Customer</button>
+      </div>
+  </div>
   <table id="customerTable">
     <thead>
       <tr>
-        <!-- THIS IS THE CHANGE -->
         <th>S.No.</th>
         <th>Name</th>
         <th>Opening Bal. (₹)</th>
@@ -205,64 +208,84 @@
   </table>
 </section>
 
-        <section id="supplierManagementSection" class="app-section table-container" style="display: none;">
-          <h2>Supplier Management</h2>
-          <button class="btn btn-primary" onclick="openLenderModal(null, 'Supplier')">+ Add New Supplier</button>
-          <table id="supplierTable">
-            <thead><tr><th>ID</th><th>Supplier Name</th><th>Contact</th><th>Current Payable (₹)</th><th>Notes</th><th>Actions</th></tr></thead>
-            <tbody id="supplierTableBody"></tbody>
-          </table>
-        </section>
+<section id="supplierManagementSection" class="app-section table-container" style="display: none;">
+    <div class="section-header">
+      <h2>Supplier Management</h2>
+      <div class="section-actions">
+        <button class="btn btn-secondary" onclick="exportSuppliers()"><i class="fas fa-file-csv"></i> Export to CSV</button>
+        <button class="btn btn-primary" onclick="openLenderModal(null, 'Supplier')">+ Add New Supplier</button>
+      </div>
+    </div>
+    <table id="supplierTable">
+    <thead><tr><th>ID</th><th>Supplier Name</th><th>Contact</th><th>Current Payable (₹)</th><th>Notes</th><th>Actions</th></tr></thead>
+    <tbody id="supplierTableBody"></tbody>
+  </table>
+</section>
 
-        <section id="inventoryManagementSection" class="app-section table-container" style="display: none;">
-          <h2>Inventory Management</h2>
-          <button class="btn btn-primary" onclick="openProductModal()">+ Add New Product</button>
-          <table id="productTable">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Product Name</th>
-                <th>SKU</th>
-                <th>Preferred Supplier</th>
-                <th class="num">Pref. Purchase Price (₹)</th>
-                <th class="num">Avg. Cost Price (₹)</th>
-                <th class="num">Sale Price (₹)</th>
-                <th>Current Stock</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="productTableBody"></tbody>
-          </table>
-        </section>
+<section id="inventoryManagementSection" class="app-section table-container" style="display: none;">
+    <div class="section-header">
+      <h2>Inventory Management</h2>
+      <div class="section-actions">
+        <button class="btn btn-secondary" onclick="exportProducts()"><i class="fas fa-file-csv"></i> Export to CSV</button>
+        <button class="btn btn-primary" onclick="openProductModal()">+ Add New Product</button>
+      </div>
+    </div>
+    <table id="productTable">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Product Name</th>
+        <th>SKU</th>
+        <th>Preferred Supplier</th>
+        <th class="num">Pref. Purchase Price (₹)</th>
+        <th class="num">Avg. Cost Price (₹)</th>
+        <th class="num">Sale Price (₹)</th>
+        <th>Current Stock</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="productTableBody"></tbody>
+  </table>
+</section>
 
-        <section id="invoiceManagementSection" class="app-section table-container" style="display: none;">
-          <h2>Invoices</h2>
-          <button class="btn btn-primary" onclick="openInvoiceModal()">+ New Invoice</button>
-          <table id="invoiceTable">
-            <thead>
-              <tr>
-                <th>Invoice #</th>
-                <th>Customer</th>
-                <th>Type</th>
-                <th>Inv. Date</th>
-                <th>Due Date</th>
-                <th class="num">Total (₹)</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="invoiceTableBody"></tbody>
-          </table>
-        </section>
+<section id="invoiceManagementSection" class="app-section table-container" style="display: none;">
+    <div class="section-header">
+      <h2>Invoices</h2>
+      <div class="section-actions">
+        <button class="btn btn-secondary" onclick="exportInvoices()"><i class="fas fa-file-csv"></i> Export to CSV</button>
+        <button class="btn btn-primary" onclick="openInvoiceModal()">+ New Invoice</button>
+      </div>
+    </div>
+    <table id="invoiceTable">
+    <thead>
+      <tr>
+        <th>Invoice #</th>
+        <th>Customer</th>
+        <th>Type</th>
+        <th>Inv. Date</th>
+        <th>Due Date</th>
+        <th class="num">Total (₹)</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="invoiceTableBody"></tbody>
+  </table>
+</section>
 
-        <section id="allTransactionsSection" class="app-section table-container" style="display: none;">
-          <h2>All Transactions</h2>
-           <button class="btn btn-primary" onclick="openTransactionModal(null)">+ Add Transaction</button>
-          <table>
-            <thead><tr><th>ID</th><th>User/Entity</th><th>Amount (₹)</th><th>Description</th><th>Category</th><th>Date</th><th>Actions</th></tr></thead>
-            <tbody id="transactionTable"></tbody>
-          </table>
-        </section>
+<section id="allTransactionsSection" class="app-section table-container" style="display: none;">
+    <div class="section-header">
+      <h2>All Transactions</h2>
+      <div class="section-actions">
+        <button class="btn btn-secondary" onclick="exportTransactions()"><i class="fas fa-file-csv"></i> Export to CSV</button>
+        <button class="btn btn-primary" onclick="openTransactionModal(null)">+ Add Transaction</button>
+      </div>
+    </div>
+    <table>
+    <thead><tr><th>ID</th><th>User/Entity</th><th>Amount (₹)</th><th>Description</th><th>Category</th><th>Date</th><th>Actions</th></tr></thead>
+    <tbody id="transactionTable"></tbody>
+  </table>
+</section>
 
         <section id="ledgersSection" class="app-section table-container" style="display: none;">
           <h2>Business Ledgers</h2>
@@ -365,6 +388,13 @@
                       <h4>Top Selling Products</h4>
                       <p>See which products are your best performers.</p>
                   </div>
+              </div>
+              <div class="report-card-item" onclick="generateAndDisplayReport('full_disclosure')">
+                <div class="rc-icon disclosure"><i class="fas fa-book-open"></i></div>
+                <div class="rc-content">
+                    <h4>Full Disclosure Report</h4>
+                    <p>A comprehensive overview of all business metrics.</p>
+                </div>
               </div>
           </div>
         
