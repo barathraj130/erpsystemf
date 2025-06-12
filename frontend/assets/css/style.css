@@ -682,4 +682,12 @@ label { display: block; margin-bottom: 5px; font-size: 0.85em; font-weight: 500;
     font-size: 1em;
     font-weight: 500;
     margin-bottom: 10px;
+
+}
+.valuation-net-worth {
+  background-color: #e9f2fe;
+  border: 1px solid var(--primary-color);
+}
+.valuation-net-worth p {
+  color: var(--primary-color) !important;
 }

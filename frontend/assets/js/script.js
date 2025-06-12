@@ -1,4 +1,3 @@
-// script.js
 const API = "http://localhost:3000/api";
 let editingUserId = null;
 let editingTxnId = null;
@@ -2387,7 +2386,6 @@ function openCreateBusinessChitLoanAgreementModal(agreementId = null) { // Chang
     });
     modal.style.display = "block";
 }
-
 function closeBusinessChitLoanAgreementModal() {
     const modal = document.getElementById("businessChitLoanAgreementModal");
     if (modal) {
@@ -4650,6 +4648,8 @@ async function generateAndDisplayReport(reportType) {
         return tx.date.startsWith(period);
     });
 
+    // *** CORRECTED SWITCH STATEMENT ***
+    // Inside the generateAndDisplayReport function...
     switch (reportType) {
         case 'turnover_report':
             reportHtml = generateTurnoverReport(period);
@@ -4661,6 +4661,17 @@ async function generateAndDisplayReport(reportType) {
             reportHtml = generateCashFlowReport(monthlyTransactions, period);
             setTimeout(() => createCashFlowChart(monthlyTransactions), 50);
             break;
+        case 'business_valuation':
+            reportHtml = await generateValuationReport(period);
+            break;
+        
+        // This is the line to fix:
+        case 'payments_breakdown':
+            // Pass both the filtered transactions AND the period string
+            reportHtml = generatePaymentsBreakdownReport(monthlyTransactions, period); 
+            break;
+        // End of the fix
+
         case 'top_customers':
             reportHtml = generateTopCustomersReport(monthlyTransactions, period);
             break;
@@ -5036,9 +5047,6 @@ async function generateFullDisclosureReport(period) {
     `;
 }
 
-
-
-
 // --- DASHBOARD CHARTS AND ACTIVITY ---
 function initializeDashboardCharts() {
     if (revenueChartInstance) { revenueChartInstance.destroy(); revenueChartInstance = null; }
@@ -5060,6 +5068,12 @@ function createRevenueChart() {
     const granularity = document.querySelector('.chart-controls .chart-time-btn.active').dataset.period;
     const ranges = getPeriodDateRanges(period);
 
+    // --- FIX: Determine the correct end date for the loop ---
+    const today = new Date();
+    today.setHours(23, 59, 59, 999); // Set to end of today
+    const loopEndDate = today < ranges.currentEnd ? today : ranges.currentEnd;
+    // --- END FIX ---
+
     const labels = [];
     const dataPoints = [];
     const aggregatedData = new Map();
@@ -5071,14 +5085,17 @@ function createRevenueChart() {
 
     if (granularity === 'daily') {
         let currentDate = new Date(ranges.currentStart);
-        while (currentDate <= ranges.currentEnd) {
+        // --- FIX: Use loopEndDate instead of ranges.currentEnd ---
+        while (currentDate <= loopEndDate) {
             aggregatedData.set(currentDate.toISOString().split('T')[0], 0);
             currentDate.setDate(currentDate.getDate() + 1);
         }
         relevantInvoices.forEach(inv => {
             const dateStr = inv.invoice_date.split('T')[0];
             const revenue = parseFloat(inv.amount_before_tax || 0);
-            aggregatedData.set(dateStr, (aggregatedData.get(dateStr) || 0) + revenue);
+            if (aggregatedData.has(dateStr)) { // Only add if it's within our loop range
+                aggregatedData.set(dateStr, (aggregatedData.get(dateStr) || 0) + revenue);
+            }
         });
         aggregatedData.forEach((value, key) => {
             labels.push(new Date(key).toLocaleDateString("en-US", { month: "short", day: "numeric" }));
@@ -5151,20 +5168,33 @@ function createCategoryChart() {
     if (categoryChartInstance) categoryChartInstance.destroy();
     const ctx = canvas.getContext("2d");
     
-    const categoryData = {};
-    allTransactionsCache.forEach(tx => {
-        const catInfo = transactionCategories.find(c => c.name === tx.category); // Use full original categories
-        if (catInfo && catInfo.isProductSale && catInfo.group === "customer_revenue") { 
-            const amount = Math.abs(parseFloat(tx.amount || 0));
-            categoryData[tx.category] = (categoryData[tx.category] || 0) + amount;
+    // --- FIX: Logic now correctly calculates top products from invoices ---
+    const period = document.getElementById('dashboardPeriod')?.value || 'this_month';
+    const ranges = getPeriodDateRanges(period);
+    const productSales = {};
+
+    invoicesCache.forEach(inv => {
+        const invDate = new Date(inv.invoice_date);
+        if (invDate >= ranges.currentStart && invDate <= ranges.currentEnd && inv.status !== 'Void' && inv.status !== 'Draft') {
+            if (inv.line_items && Array.isArray(inv.line_items)) {
+                inv.line_items.forEach(item => {
+                    if (item.product_id) {
+                        const revenue = parseFloat(item.line_total || 0);
+                        const product = productsCache.find(p => p.id === item.product_id);
+                        const productName = product ? product.product_name : `Product ID ${item.product_id}`;
+                        productSales[productName] = (productSales[productName] || 0) + revenue;
+                    }
+                });
+            }
         }
     });
 
-    const sortedCategories = Object.entries(categoryData)
+    const sortedProducts = Object.entries(productSales)
         .sort(([, a], [, b]) => b - a)
         .slice(0, 5); 
+    // --- END FIX ---
 
-    if (sortedCategories.length === 0) {
+    if (sortedProducts.length === 0) {
         placeholder.style.display = 'block';
         canvas.style.display = 'none';
         return;
@@ -5177,9 +5207,9 @@ function createCategoryChart() {
     categoryChartInstance = new Chart(ctx, {
         type: "doughnut",
         data: {
-            labels: sortedCategories.map(([category]) => category),
+            labels: sortedProducts.map(([productName]) => productName), // Use product name for labels
             datasets: [{
-                data: sortedCategories.map(([, amount]) => amount),
+                data: sortedProducts.map(([, amount]) => amount),
                 backgroundColor: chartColors,
                 borderColor: '#ffffff',
                 borderWidth: 2,
@@ -5195,8 +5225,6 @@ function createCategoryChart() {
         },
     });
 }
-
-
 function updateDashboardPeriod() {
     updateDashboardCards();
     updateChartsBasedOnPeriod(); 
@@ -5245,13 +5273,14 @@ async function loadRecentActivity() {
                     displayedAmount = -Math.abs(displayedAmount); 
                 }
             }
-
+            
+            // --- FIX: Removed color classes from icon string ---
             return {
                 type: "transaction",
                 title: `${tx.category || "Transaction"}`,
                 subtitle: `₹${Math.abs(displayedAmount).toFixed(2)} ${displayedAmount >= 0 ? '(Inflow)' : '(Outflow)'}`,
                 time: formatTimeAgo(tx.date || tx.transaction_date || tx.created_at),
-                icon: displayedAmount >= 0 ? 'fa-arrow-up green' : 'fa-arrow-down red', 
+                icon: displayedAmount >= 0 ? 'fa-arrow-up' : 'fa-arrow-down', // <-- Corrected
                 bgColor: displayedAmount >= 0 ? 'var(--success-color)' : 'var(--danger-color)'
             };
         });
@@ -5318,7 +5347,6 @@ async function loadRecentActivity() {
         </div>
     `).join("");
 }
-
 
 function formatTimeAgo(dateString) {
     if (!dateString) return "Unknown";
@@ -5653,4 +5681,147 @@ function openLoanDetailsModal(agreementId) {
 function closeLoanDetailsModal() {
     const modal = document.getElementById("loanDetailsModal");
     if (modal) modal.style.display = "none";
+}
+async function generateValuationReport(period) {
+    // Note: Valuation is a snapshot in time. The 'period' is ignored for this specific report.
+    // Ensure all data is loaded
+    if (usersDataCache.length === 0) await loadUsers();
+    if (productsCache.length === 0) await loadProducts();
+    if (allTransactionsCache.length === 0) await loadAllTransactions();
+    if (externalEntitiesCache.length === 0) await loadLenders(null, true);
+    if (businessAgreementsCache.length === 0) await loadBusinessExternalFinanceAgreements();
+
+    // --- ASSET CALCULATION ---
+    let totalCash = 0;
+    let totalBank = 0;
+    allTransactionsCache.forEach(t => {
+        const catInfo = transactionCategories.find(c => c.name === t.category);
+        if (!catInfo || !catInfo.affectsLedger) return;
+        const amount = parseFloat(t.amount);
+        if (catInfo.affectsLedger === 'cash') {
+            if (catInfo.type.includes("income")) totalCash += Math.abs(amount);
+            else if (catInfo.type.includes("expense")) totalCash -= Math.abs(amount);
+        } else if (catInfo.affectsLedger === 'bank') {
+            if (catInfo.type.includes("income")) totalBank += Math.abs(amount);
+            else if (catInfo.type.includes("expense")) totalBank -= Math.abs(amount);
+        } else if (catInfo.affectsLedger === 'both_cash_out_bank_in') {
+            totalCash -= Math.abs(amount);
+            totalBank += Math.abs(amount);
+        } else if (catInfo.affectsLedger === 'both_cash_in_bank_out') {
+            totalCash += Math.abs(amount);
+            totalBank -= Math.abs(amount);
+        }
+    });
+
+    const accountsReceivable = usersDataCache
+        .filter(u => u.role !== 'admin')
+        .reduce((sum, user) => {
+            const userTransactionsTotal = allTransactionsCache
+                .filter(tx => tx.user_id === user.id)
+                .reduce((txSum, tx) => txSum + parseFloat(tx.amount || 0), 0);
+            return sum + (parseFloat(user.initial_balance) || 0) + userTransactionsTotal;
+        }, 0);
+
+    const inventoryValue = productsCache.reduce((sum, p) => {
+        return sum + (parseFloat(p.current_stock || 0) * parseFloat(p.cost_price || 0));
+    }, 0);
+
+    const loansGiven = businessAgreementsCache
+        .filter(a => a.agreement_type === 'loan_given_by_biz')
+        .reduce((sum, a) => sum + parseFloat(a.outstanding_principal || 0), 0);
+    
+    const totalAssets = totalCash + totalBank + accountsReceivable + inventoryValue + loansGiven;
+
+    // --- LIABILITY CALCULATION ---
+    const suppliers = externalEntitiesCache.filter(e => e.entity_type === 'Supplier');
+    const accountsPayable = suppliers.reduce((sum, s) => {
+         const supplierTransactionsTotal = allTransactionsCache
+                .filter(tx => tx.lender_id === s.id)
+                .reduce((txSum, tx) => txSum + parseFloat(tx.amount || 0), 0);
+        return sum + (parseFloat(s.initial_payable_balance) || 0) + supplierTransactionsTotal;
+    }, 0);
+    
+    const loansTaken = businessAgreementsCache
+        .filter(a => a.agreement_type === 'loan_taken_by_biz')
+        .reduce((sum, a) => sum + parseFloat(a.outstanding_principal || 0), 0);
+
+    const totalLiabilities = accountsPayable + loansTaken;
+    
+    const netWorth = totalAssets - totalLiabilities;
+
+    return `
+        <h3 class="report-title">Business Valuation Snapshot (as of Today)</h3>
+        <div class="disclosure-split-view">
+            <div class="disclosure-section">
+                <h4 class="disclosure-section-title">Assets</h4>
+                <table>
+                    <tbody>
+                        <tr><td>Cash on Hand</td><td class="num positive">₹${totalCash.toFixed(2)}</td></tr>
+                        <tr><td>Bank Balance</td><td class="num positive">₹${totalBank.toFixed(2)}</td></tr>
+                        <tr><td>Accounts Receivable</td><td class="num positive">₹${accountsReceivable.toFixed(2)}</td></tr>
+                        <tr><td>Inventory Value (at Cost)</td><td class="num positive">₹${inventoryValue.toFixed(2)}</td></tr>
+                        <tr><td>Loans Given Out (Principal)</td><td class="num positive">₹${loansGiven.toFixed(2)}</td></tr>
+                        <tr style="border-top: 1px solid #333; font-weight: bold;"><td>Total Assets</td><td class="num positive">₹${totalAssets.toFixed(2)}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="disclosure-section">
+                <h4 class="disclosure-section-title">Liabilities</h4>
+                <table>
+                    <tbody>
+                        <tr><td>Accounts Payable</td><td class="num negative">₹${accountsPayable.toFixed(2)}</td></tr>
+                        <tr><td>Loans Taken (Principal)</td><td class="num negative">₹${loansTaken.toFixed(2)}</td></tr>
+                        <tr style="border-top: 1px solid #333; font-weight: bold;"><td>Total Liabilities</td><td class="num negative">₹${totalLiabilities.toFixed(2)}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="pnl-summary-grid">
+            <div class="pnl-card net-profit valuation-net-worth" style="grid-column: 1 / -1;">
+                <h5>Estimated Net Worth (Assets - Liabilities)</h5><p>₹${netWorth.toFixed(2)}</p>
+            </div>
+        </div>
+    `;
+}
+
+// This is the corrected function
+function generatePaymentsBreakdownReport(monthlyTransactions, period) {
+    let supplierPayments = 0;
+    let loanPrincipalRepayments = 0;
+    let loanInterestPayments = 0;
+
+    monthlyTransactions.forEach(tx => {
+        const amount = Math.abs(parseFloat(tx.amount || 0));
+        const cat = tx.category || '';
+        if (cat.startsWith('Payment Made to Supplier')) {
+            supplierPayments += amount;
+        } else if (cat.startsWith('Loan Principal Repaid by Business')) {
+            loanPrincipalRepayments += amount;
+        } else if (cat.startsWith('Loan Interest Paid by Business')) {
+            loanInterestPayments += amount;
+        }
+    });
+    
+    const totalPayments = supplierPayments + loanPrincipalRepayments + loanInterestPayments;
+
+    return `
+        <h3 class="report-title">Payments Breakdown - ${period}</h3>
+        <div class="pnl-summary-grid">
+             <div class="pnl-card"><h5>Total Payments Made</h5><p class="negative">₹${totalPayments.toFixed(2)}</p></div>
+        </div>
+        <table>
+            <thead><tr><th>Payment Type</th><th class="num">Total Amount Paid (₹)</th></tr></thead>
+            <tbody>
+                <tr><td>Payments to Suppliers</td><td class="num negative">₹${supplierPayments.toFixed(2)}</td></tr>
+                <tr><td>Loan Principal Repayments</td><td class="num negative">₹${loanPrincipalRepayments.toFixed(2)}</td></tr>
+                <tr><td>Loan Interest Payments</td><td class="num negative">₹${loanInterestPayments.toFixed(2)}</td></tr>
+            </tbody>
+            <tfoot>
+                <tr style="font-weight: bold;">
+                    <td>Grand Total</td>
+                    <td class="num negative">₹${totalPayments.toFixed(2)}</td>
+                </tr>
+            </tfoot>
+        </table>
+    `;
 }
