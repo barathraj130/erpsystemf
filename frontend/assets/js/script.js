@@ -2831,6 +2831,8 @@ async function loadProducts() {
 
 // in script.js
 
+// in script.js, find and replace the displayProducts function
+
 function displayProducts() {
     const tableBody = document.getElementById("productTableBody");
     if(!tableBody) return;
@@ -2841,18 +2843,16 @@ function displayProducts() {
         return;
     }
 
-    // Use the second argument 'index' from forEach, which is the 0-based position in the array.
+    // --- THIS IS THE CHANGE ---
+    const totalProducts = productsCache.length; // Get the total count first
+
     productsCache.forEach((product, index) => {
         const row = tableBody.insertRow();
         
-        // --- THIS IS THE CHANGE ---
-        // OLD WAY:
-        // row.insertCell().textContent = product.id; 
-
-        // NEW WAY: Display the loop index + 1 as the Serial Number (S.No.)
-        row.insertCell().textContent = index + 1; 
-        // --- END OF CHANGE ---
-
+        // Calculate the descending serial number
+        row.insertCell().textContent = totalProducts - index; 
+        
+        // The rest of the function remains the same
         row.insertCell().textContent = product.product_name;
         row.insertCell().textContent = product.sku || "-";
         row.insertCell().textContent = product.preferred_supplier_name || "-";
@@ -2876,6 +2876,7 @@ function displayProducts() {
             <button class='btn btn-danger btn-sm' onclick='deleteProduct(${product.id})'><i class="fas fa-trash"></i></button>
         `;
     });
+    // --- END OF CHANGE ---
 }
 
 async function openProductModal(productIdOrNull = null) {
