@@ -2189,84 +2189,102 @@ async function deleteLender(id) {
 // Replace the existing loadCustomerSummaries function with this corrected version
 async function loadCustomerSummaries() {
     const customerTableBody = document.getElementById("customerTableBody");
-    if (!customerTableBody) return;
-    customerTableBody.innerHTML =
-        '<tr><td colspan="8" style="text-align:center;">Loading customer data...</td></tr>';
+    if (!customerTableBody) {
+        console.error("Customer summary table body not found in the DOM.");
+        return;
+    }
+    customerTableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;">Loading customer data...</td></tr>';
+    
     try {
+        // Ensure necessary data caches are populated before proceeding
         if (usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions)
-            await loadAllTransactions();
-        customerTableBody.innerHTML = "";
+        if (allTransactionsCache.length === 0 && !isLoadingTransactions) await loadAllTransactions();
         
+        customerTableBody.innerHTML = ""; // Clear the loading message
+        
+        // Filter out system users like 'admin' to only show actual customers
         const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
 
         if (!Array.isArray(customersOnly) || customersOnly.length === 0) {
-            customerTableBody.innerHTML =
-                '<tr><td colspan="8" style="text-align:center;">No customers found.</td></tr>';
+            customerTableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;">No customers found.</td></tr>';
             return;
         }
 
-        // --- FIX START ---
-        // Initialize a counter for the serial number
-        let serialNumber = 1;
+        let serialNumber = 1; // For user-friendly row numbering
 
         customersOnly.forEach((user) => {
-            let receivable = parseFloat(user.initial_balance) || 0;
+            // *** OPTIMIZATION: Directly use the API's pre-calculated remaining_balance ***
+            // This avoids a costly loop inside a loop and is much more efficient.
+            // A positive balance means the business is owed money (receivable).
+            const receivable = parseFloat(user.remaining_balance || 0);
+
+            // For secondary summary columns, we still calculate on the client for this view.
             let loanOutstanding = 0;
             let chitNetPosition = 0;
 
-            allTransactionsCache
-                .filter((tx) => tx.user_id === user.id)
-                .forEach((tx) => {
-                    const categoryInfo = transactionCategories.find(
-                        (cat) => cat.name === tx.category,
-                    );
-                    if (categoryInfo) {
-                        const amount = parseFloat(tx.amount);
-                        if (categoryInfo.group === "customer_revenue") receivable += Math.abs(amount); 
-                        else if (categoryInfo.group === "customer_payment") receivable -= Math.abs(amount); 
-                        else if (categoryInfo.name === "Product Return from Customer (Credit Note)") receivable -= Math.abs(amount); 
-                        else if (categoryInfo.name.startsWith("Product Return from Customer (Refund via")) receivable -= Math.abs(amount);
-                        if (categoryInfo.group === "customer_loan_out") loanOutstanding += amount;
-                        else if (categoryInfo.group === "customer_loan_in") loanOutstanding += amount;
-                        else if (categoryInfo.group === "customer_chit_in") chitNetPosition -= amount;
-                        else if (categoryInfo.group === "customer_chit_out") chitNetPosition -= amount;
-                    }
-                });
+            // Filter transactions once for the current user
+            const userTransactions = allTransactionsCache.filter((tx) => tx.user_id === user.id);
 
+            userTransactions.forEach((tx) => {
+                const categoryInfo = transactionCategories.find((cat) => cat.name === tx.category);
+                if (categoryInfo) {
+                    const amount = parseFloat(tx.amount);
+                    if (categoryInfo.group === "customer_loan_out") {
+                        loanOutstanding += amount;
+                    } else if (categoryInfo.group === "customer_loan_in") {
+                        loanOutstanding += amount; // These are negative, so it correctly reduces the outstanding amount
+                    } else if (categoryInfo.group === "customer_chit_in") {
+                        chitNetPosition -= amount; // Business receives, so liability to customer increases
+                    } else if (categoryInfo.group === "customer_chit_out") {
+                        chitNetPosition -= amount; // Business pays out, liability decreases
+                    }
+                }
+            });
+
+            // Create and populate the table row
             const row = customerTableBody.insertRow();
             
-            // Display the serial number instead of the database ID
             row.insertCell().textContent = serialNumber++;
-
-            // The rest of the row population remains the same
             row.insertCell().textContent = user.username;
             row.insertCell().textContent = (parseFloat(user.initial_balance) || 0).toFixed(2);
             
             const receivableCell = row.insertCell();
             receivableCell.textContent = receivable.toFixed(2);
-            receivableCell.className = receivable > 0 ? "negative-balance" : receivable < 0 ? "positive-balance" : "";
+            // In business terms, a positive receivable (customer owes us) is a "good" thing,
+            // but for balance sheets, it might be colored differently. Here we color it red if customer owes us.
+            receivableCell.className = receivable > 0 ? "negative-balance num" : receivable < 0 ? "positive-balance num" : "num";
             
             const loanCell = row.insertCell();
             loanCell.textContent = loanOutstanding.toFixed(2);
-            loanCell.className = loanOutstanding > 0 ? "negative-balance" : "";
+            // If we've given a loan, the outstanding amount is an asset. Here, we color it red if positive.
+            loanCell.className = loanOutstanding > 0 ? "negative-balance num" : "num";
             
             const chitCell = row.insertCell();
             chitCell.textContent = chitNetPosition.toFixed(2);
-            chitCell.className = chitNetPosition >= 0 ? "positive-balance" : "negative-balance";
+            // If positive, business owes the customer. If negative, customer owes the business.
+            chitCell.className = chitNetPosition >= 0 ? "negative-balance num" : "positive-balance num";
             
             row.insertCell().textContent = new Date(user.created_at).toLocaleDateString();
-            row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="openUserTransactionHistoryModal(${user.id}, '${user.username.replace(/'/g, "\\'")}')"><i class="fas fa-history"></i></button> <button class='btn btn-primary btn-sm' onclick='openUserModal(${JSON.stringify(user)})'><i class="fas fa-edit"></i></button> <button class='btn btn-danger btn-sm' onclick='deleteUser(${user.id})'><i class="fas fa-trash"></i></button>`;
+            
+            const actionsCell = row.insertCell();
+            actionsCell.innerHTML = `
+                <button class="btn btn-sm btn-info" onclick="openUserTransactionHistoryModal(${user.id}, '${user.username.replace(/'/g, "\\'")}')" title="View History">
+                    <i class="fas fa-history"></i>
+                </button>
+                <button class='btn btn-primary btn-sm' onclick='openUserModal(${JSON.stringify(user)})' title="Edit Customer">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class='btn btn-danger btn-sm' onclick='deleteUser(${user.id})' title="Delete Customer">
+                    <i class="fas fa-trash"></i>
+                </button>
+            `;
         });
-        // --- FIX END ---
 
-        if (customerTableBody.rows.length === 0 && customersOnly.length > 0)
-            customerTableBody.innerHTML =
-                '<tr><td colspan="8" style="text-align:center;">No financial activity for listed customers.</td></tr>';
     } catch (error) {
         console.error("Error loading customer summaries:", error);
-        if(customerTableBody)
-            customerTableBody.innerHTML = `<tr><td colspan="8" style="text-align:center;">Error: ${error.message}</td></tr>`;
+        if (customerTableBody) {
+            customerTableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:red;">Error: ${error.message}</td></tr>`;
+        }
     }
 }
 async function loadSupplierSummaries() {
@@ -2647,55 +2665,109 @@ async function loadUserTransactionHistory(
     userName,
     categoryGroupFilter = 'all',
 ) {
-    const tableBody = document.getElementById(
-        "userTransactionHistoryTableBody",
-    );
-    if(!tableBody) return;
-    tableBody.innerHTML =
-        '<tr><td colspan="4" style="text-align:center;">Loading history...</td></tr>';
+    const table = document.getElementById("userTransactionHistoryTable");
+    const tableBody = table?.querySelector("tbody");
+    const tableFoot = table?.querySelector("tfoot") || table?.appendChild(document.createElement("tfoot"));
+
+    if (!tableBody || !tableFoot) return;
+    
+    tableBody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Loading history...</td></tr>';
+    tableFoot.innerHTML = "";
+
     try {
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions)
-            await loadAllTransactions();
-        let userTransactions = allTransactionsCache.filter(
-            (tx) => tx.user_id === userId,
-        );
+        if (allTransactionsCache.length === 0 && !isLoadingTransactions) await loadAllTransactions();
+        if (usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
+
+        let userTransactions = allTransactionsCache.filter(tx => tx.user_id === userId);
+        
         if (categoryGroupFilter !== 'all') {
             userTransactions = userTransactions.filter(tx => {
-                const categoryInfo = transactionCategories.find(cat => cat.name === tx.category); // Use detailed categories
-                if(!categoryInfo || !categoryInfo.group) return false;
-
-                if(categoryGroupFilter === "customer_loan") return categoryInfo.group === "customer_loan_out" || categoryInfo.group === "customer_loan_in";
-                else if(categoryGroupFilter === "customer_chit") return categoryInfo.group === "customer_chit_in" || categoryInfo.group === "customer_chit_out";
-                else if(categoryGroupFilter === "customer_revenue") return categoryInfo.group === "customer_revenue" || categoryInfo.group === "customer_service"; 
+                const categoryInfo = transactionCategories.find(cat => cat.name === tx.category);
+                if (!categoryInfo || !categoryInfo.group) return false;
+                if (categoryGroupFilter === "customer_loan") return ["customer_loan_out", "customer_loan_in"].includes(categoryInfo.group);
+                if (categoryGroupFilter === "customer_chit") return ["customer_chit_in", "customer_chit_out"].includes(categoryInfo.group);
+                if (categoryGroupFilter === "customer_revenue") return ["customer_revenue", "customer_service"].includes(categoryInfo.group);
                 return categoryInfo.group === categoryGroupFilter;
             });
         }
-        userTransactions.sort(
-            (a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id,
-        );
+        
+        // Sort transactions chronologically (oldest first) to calculate running balance
+        userTransactions.sort((a, b) => new Date(a.date) - new Date(b.date) || a.id - b.id);
+        
         tableBody.innerHTML = "";
+
         if (userTransactions.length === 0) {
-            tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No transactions found for ${userName} with selected filter.</td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No transactions found for ${userName} with selected filter.</td></tr>`;
             return;
         }
+
+        const customer = usersDataCache.find(u => u.id === userId);
+        const firstTransactionDate = userTransactions[0].date;
+
+        // Calculate opening balance
+        let openingBalance = parseFloat(customer.initial_balance || 0);
+        allTransactionsCache
+            .filter(tx => tx.user_id === userId && tx.date < firstTransactionDate)
+            .forEach(tx => { openingBalance += parseFloat(tx.amount || 0); });
+
+        let runningBalance = openingBalance;
+        let totalDebits = 0;
+        let totalCredits = 0;
+
+        // Add Opening Balance row
+        const openingRow = tableBody.insertRow();
+        openingRow.innerHTML = `
+            <td>${new Date(firstTransactionDate).toLocaleDateString()}</td>
+            <td><strong>Opening Balance</strong></td>
+            <td class="num"></td>
+            <td class="num"></td>
+            <td class="num ${runningBalance >= 0 ? 'positive-balance' : 'negative-balance'}"><strong>₹${runningBalance.toFixed(2)}</strong></td>
+        `;
+
         userTransactions.forEach((tx) => {
             const row = tableBody.insertRow();
-            row.insertCell().textContent = new Date(
-                tx.date,
-            ).toLocaleDateString();
-            row.insertCell().textContent = tx.category || "-";
-            row.insertCell().textContent = tx.description || "-";
-            const amountCell = row.insertCell();
-            amountCell.textContent = tx.amount.toFixed(2);
-            amountCell.className = tx.amount >= 0 ? "positive" : "negative";
+            let debit = "";
+            let credit = "";
+            const amount = parseFloat(tx.amount || 0);
+
+            if (amount > 0) {
+                debit = amount.toFixed(2);
+                totalDebits += amount;
+            } else {
+                credit = Math.abs(amount).toFixed(2);
+                totalCredits += Math.abs(amount);
+            }
+            
+            runningBalance += amount;
+            
+            const particulars = `${tx.category || "N/A"}${tx.description ? ` (${tx.description})` : ''}`;
+            
+            row.innerHTML = `
+                <td>${new Date(tx.date).toLocaleDateString()}</td>
+                <td>${particulars}</td>
+                <td class="num positive">${debit ? '₹' + debit : ''}</td>
+                <td class="num negative">${credit ? '₹' + credit : ''}</td>
+                <td class="num ${runningBalance >= 0 ? 'positive-balance' : 'negative-balance'}">₹${runningBalance.toFixed(2)}</td>
+            `;
         });
+
+        // Add a closing summary in the tfoot
+        tableFoot.innerHTML = `
+            <tr style="border-top: 2px solid #ccc; font-weight: bold;">
+                <td colspan="2" style="text-align:right;">Total</td>
+                <td class="num positive">₹${totalDebits.toFixed(2)}</td>
+                <td class="num negative">₹${totalCredits.toFixed(2)}</td>
+                <td></td>
+            </tr>
+            <tr style="font-weight: bold;">
+                <td colspan="4" style="text-align:right;">Closing Balance</td>
+                <td class="num ${runningBalance >= 0 ? 'positive-balance' : 'negative-balance'}">₹${runningBalance.toFixed(2)}</td>
+            </tr>
+        `;
+
     } catch (error) {
-        console.error(
-            `Error loading transaction history for user ${userId}:`,
-            error,
-        );
-        if(tableBody)
-            tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;">Error: ${error.message}</td></tr>`;
+        console.error(`Error loading ledger for user ${userId}:`, error);
+        if (tableBody) tableBody.innerHTML = `<tr><td colspan="5" style="text-align:center;">Error: ${error.message}</td></tr>`;
     }
 }
 
@@ -3161,7 +3233,6 @@ async function loadAndDisplayProductSuppliers(productId) {
         displayProductSuppliersList([]);
     }
 }
-
 function displayProductSuppliersList(suppliers) {
     const tableBody = document.getElementById("productSuppliersTableBody");
     if (!tableBody) return;
@@ -4398,12 +4469,16 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         printHtml += `</div></body></html>`;
 
         const printWindow = window.open("", "_blank", "height=800,width=1000");
-        printWindow.document.write(printHtml);
-        printWindow.document.close();
-        printWindow.focus();
-        setTimeout(() => {
-            printWindow.print();
-        }, 500);
+        if (printWindow) {
+            printWindow.document.write(printHtml);
+            printWindow.document.close();
+            printWindow.focus();
+            setTimeout(() => {
+                printWindow.print();
+            }, 500);
+        } else {
+            alert("Could not open print window. Please disable your pop-up blocker for this site.");
+        }
     } catch (error) {
         console.error("Error preparing invoice for print:", error);
         alert("Could not prepare invoice for printing: " + error.message);
@@ -4624,14 +4699,16 @@ function navigateToInvoicesAndOpen(invoiceId) {
    navigateToSection('invoiceManagementSection');
     openInvoiceModal(invoiceId);
 }
-async function generateAndDisplayReport(reportType) {
-    const period = document.getElementById('reportPeriodMonth').value;
+async function generateAndDisplayReport(reportType, view = 'monthly') {
+    const periodInput = document.getElementById('reportPeriodMonth');
     const displayArea = document.getElementById('reportDisplayArea');
+    if (!periodInput || !displayArea) return;
+
+    const period = periodInput.value;
     if (!period) {
         alert("Please select a period (Month and Year).");
         return;
     }
-    if (!displayArea) return;
 
     displayArea.style.display = 'block';
     displayArea.innerHTML = `<p>Generating ${reportType.replace(/_/g, ' ')} report for ${period}...</p>`;
@@ -4644,15 +4721,11 @@ async function generateAndDisplayReport(reportType) {
     let reportHtml = '';
     const [year, month] = period.split('-');
 
-    const monthlyTransactions = allTransactionsCache.filter(tx => {
-        return tx.date.startsWith(period);
-    });
+    const monthlyTransactions = allTransactionsCache.filter(tx => tx.date.startsWith(period));
 
-    // *** CORRECTED SWITCH STATEMENT ***
-    // Inside the generateAndDisplayReport function...
     switch (reportType) {
         case 'turnover_report':
-            reportHtml = generateTurnoverReport(period);
+            reportHtml = generateTurnoverReport(period, view);
             break;
         case 'pnl_summary':
             reportHtml = generatePnlReport(monthlyTransactions, period);
@@ -4664,14 +4737,9 @@ async function generateAndDisplayReport(reportType) {
         case 'business_valuation':
             reportHtml = await generateValuationReport(period);
             break;
-        
-        // This is the line to fix:
         case 'payments_breakdown':
-            // Pass both the filtered transactions AND the period string
             reportHtml = generatePaymentsBreakdownReport(monthlyTransactions, period); 
             break;
-        // End of the fix
-
         case 'top_customers':
             reportHtml = generateTopCustomersReport(monthlyTransactions, period);
             break;
@@ -4686,45 +4754,91 @@ async function generateAndDisplayReport(reportType) {
     displayArea.innerHTML = reportHtml;
 }
 
-function generateTurnoverReport(period) {
-    const monthlyInvoices = invoicesCache.filter(inv => 
-        inv.invoice_date.startsWith(period) && 
+function generateTurnoverReport(period, view = 'monthly') {
+    const [year, month] = period.split('-').map(Number);
+    let title, data, tableHeaderLabel;
+
+    const relevantInvoices = invoicesCache.filter(inv => 
         inv.status !== 'Void' && 
         inv.status !== 'Draft'
     );
+    
+    let invoicesForPeriod;
 
-    if (monthlyInvoices.length === 0) {
-        return `<h3 class="report-title">Turnover Report - ${period}</h3><p>No sales invoices found for this period.</p>`;
+    switch (view) {
+        case 'daily':
+            title = `Daily Turnover Report - ${period}`;
+            tableHeaderLabel = 'Date';
+            invoicesForPeriod = relevantInvoices.filter(inv => inv.invoice_date.startsWith(period));
+            data = {};
+            invoicesForPeriod.forEach(inv => {
+                const date = inv.invoice_date.split('T')[0];
+                data[date] = (data[date] || 0) + parseFloat(inv.amount_before_tax || 0);
+            });
+            break;
+        case 'monthly':
+            title = `Monthly Turnover Report - ${year}`;
+            tableHeaderLabel = 'Month';
+            invoicesForPeriod = relevantInvoices.filter(inv => inv.invoice_date.startsWith(String(year)));
+            data = {};
+            for(let i=1; i<=12; i++){
+                const monthKey = `${year}-${String(i).padStart(2, '0')}`;
+                data[monthKey] = 0;
+            }
+            invoicesForPeriod.forEach(inv => {
+                const monthKey = inv.invoice_date.substring(0, 7);
+                if (data.hasOwnProperty(monthKey)) {
+                   data[monthKey] += parseFloat(inv.amount_before_tax || 0);
+                }
+            });
+            break;
+        case 'yearly':
+            title = 'Yearly Turnover Report';
+            tableHeaderLabel = 'Year';
+            invoicesForPeriod = relevantInvoices;
+            data = {};
+            invoicesForPeriod.forEach(inv => {
+                const yearKey = inv.invoice_date.substring(0, 4);
+                data[yearKey] = (data[yearKey] || 0) + parseFloat(inv.amount_before_tax || 0);
+            });
+            break;
     }
 
-    let totalTurnover = 0;
-    const dailyData = {}; 
-
-    monthlyInvoices.forEach(inv => {
-        const turnover = parseFloat(inv.amount_before_tax || 0);
-        totalTurnover += turnover;
-        
-        const date = inv.invoice_date.split('T')[0];
-        dailyData[date] = (dailyData[date] || 0) + turnover;
-    });
+    const sortedData = Object.entries(data).sort((a, b) => new Date(a[0]) - new Date(b[0]));
     
-    const sortedDailyData = Object.entries(dailyData).sort((a, b) => new Date(a[0]) - new Date(b[0]));
+    const totalTurnover = invoicesForPeriod.reduce((sum, inv) => sum + parseFloat(inv.amount_before_tax || 0), 0);
+    const totalInvoices = invoicesForPeriod.length;
     
-    let tableRows = sortedDailyData.map(([date, amount]) => {
+    let tableRows = sortedData.map(([label, amount]) => {
+        let displayLabel = label;
+        if(view === 'monthly') {
+            displayLabel = new Date(label + '-02').toLocaleString('default', { month: 'long', year: 'numeric' });
+        } else if (view === 'daily') {
+            displayLabel = new Date(label).toLocaleDateString('en-GB');
+        }
         return `<tr>
-                    <td>${new Date(date).toLocaleDateString()}</td>
+                    <td>${displayLabel}</td>
                     <td class="num positive">₹${amount.toFixed(2)}</td>
                 </tr>`;
     }).join('');
+    
+    if (sortedData.length === 0 || totalTurnover === 0) {
+        tableRows = `<tr><td colspan="2" style="text-align:center;">No turnover data for this view.</td></tr>`;
+    }
 
     return `
-        <h3 class="report-title">Turnover Report - ${period}</h3>
+        <h3 class="report-title">${title}</h3>
+        <div class="report-view-switcher">
+            <button class="btn btn-secondary btn-sm ${view === 'daily' ? 'active' : ''}" onclick="generateAndDisplayReport('turnover_report', 'daily')">Daily</button>
+            <button class="btn btn-secondary btn-sm ${view === 'monthly' ? 'active' : ''}" onclick="generateAndDisplayReport('turnover_report', 'monthly')">Monthly</button>
+            <button class="btn btn-secondary btn-sm ${view === 'yearly' ? 'active' : ''}" onclick="generateAndDisplayReport('turnover_report', 'yearly')">Yearly</button>
+        </div>
         <div class="pnl-summary-grid">
              <div class="pnl-card"><h5>Total Turnover (Before Tax)</h5><p class="positive">₹${totalTurnover.toFixed(2)}</p></div>
-             <div class="pnl-card"><h5>Number of Invoices</h5><p>${monthlyInvoices.length}</p></div>
+             <div class="pnl-card"><h5>Number of Invoices</h5><p>${totalInvoices}</p></div>
         </div>
         <table>
-            <thead><tr><th>Date</th><th class="num">Daily Turnover (₹)</th></tr></thead>
+            <thead><tr><th>${tableHeaderLabel}</th><th class="num">Turnover (₹)</th></tr></thead>
             <tbody>${tableRows}</tbody>
         </table>
     `;
@@ -5502,10 +5616,7 @@ function openRepayLoanModal(agreementId) {
     modal.style.display = "block";
 }
 
-// *** FIX: This function was missing ***
 function toggleRepayOptions() {
-    // This function can be expanded later if needed, but for now,
-    // its existence is enough to prevent the error.
     console.log("toggleRepayOptions called."); 
 }
 
@@ -5825,3 +5936,4 @@ function generatePaymentsBreakdownReport(monthlyTransactions, period) {
         </table>
     `;
 }
+

@@ -26,29 +26,57 @@ function initializeDb() {
   db.serialize(() => {
     console.log("ℹ️ [db.js] Inside db.serialize()...");
 
-    // Users Table (Customers)
+    // Companies Table (for multi-tenancy)
     db.run(`
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE IF NOT EXISTS companies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL UNIQUE,
-        password TEXT, -- For login
-        email TEXT,
-        phone TEXT,
-        company TEXT,
-        initial_balance REAL DEFAULT 0,
-        role TEXT DEFAULT 'user', -- 'user' or 'admin'
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        company_name TEXT NOT NULL,
         address_line1 TEXT,
         address_line2 TEXT,
         city_pincode TEXT,
         state TEXT,
         gstin TEXT,
-        state_code TEXT
+        state_code TEXT,
+        phone TEXT,
+        email TEXT,
+        bank_name TEXT,
+        bank_account_no TEXT,
+        bank_ifsc_code TEXT,
+        logo_url TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `, (err) => {
-      if (err) console.error("❌ [db.js] Error creating/checking users table:", err.message);
-      else console.log("✅ [db.js] Users table checked/created.");
+      if (err) console.error("❌ [db.js] Error creating/checking companies table:", err.message);
+      else console.log("✅ [db.js] Companies table checked/created.");
     });
+    
+    // *** FIX: Added the missing 'users' table definition ***
+    // This table is for both system users (admin) and customers.
+    db.run(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER, -- Foreign key to the company this user belongs to
+        username TEXT NOT NULL UNIQUE,
+        email TEXT UNIQUE,
+        password TEXT, -- Can be NULL for customers not intended to log in
+        role TEXT NOT NULL DEFAULT 'user', -- e.g., 'user', 'admin'
+        phone TEXT,
+        company TEXT, -- This is the customer's company name, separate from the main system company
+        initial_balance REAL NOT NULL DEFAULT 0, -- Customer's opening receivable/payable
+        address_line1 TEXT,
+        address_line2 TEXT,
+        city_pincode TEXT,
+        state TEXT,
+        gstin TEXT,
+        state_code TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+      )
+    `, (err) => {
+        if (err) console.error("❌ [db.js] Error creating/checking users table:", err.message);
+        else console.log("✅ [db.js] Users table checked/created.");
+    });
+
 
     // Lenders/External Entities Table
     db.run(`

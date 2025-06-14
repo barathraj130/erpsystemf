@@ -4,23 +4,28 @@ const router = express.Router();
 const db = require('../db');
 
 // --- NEW HELPER FUNCTION TO CREATE THE MISSING TRANSACTION ---
-// This function will be called automatically when a preferred supplier is set.
+// This function is the core of the fix. It runs when a preferred supplier is set.
 async function createInitialStockTransaction(productId, supplierId, purchasePrice) {
+    console.log(`[AUTO-TX] Checking if initial stock transaction is needed for Product ID: ${productId}, Supplier ID: ${supplierId}`);
+    
     return new Promise((resolve, reject) => {
+        // Step 1: Get the product's current stock.
         db.get('SELECT current_stock FROM products WHERE id = ?', [productId], (err, product) => {
             if (err) return reject(new Error('Failed to find product for stock check.'));
+            
+            // Step 2: If there's no stock or no purchase price, we don't need a transaction.
             if (!product || product.current_stock <= 0) {
-                // No stock, so no transaction needed.
+                console.log(`[AUTO-TX] Product ${productId} has no stock. Skipping initial stock transaction.`);
                 return resolve();
             }
 
             const stockValue = product.current_stock * purchasePrice;
             if (stockValue <= 0) {
-                // No value, no transaction needed.
+                console.log(`[AUTO-TX] Initial stock for product ${productId} has no value (stock * price = 0). Skipping transaction.`);
                 return resolve();
             }
 
-            // Check if an initial stock transaction already exists for this product to prevent duplicates
+            // Step 3: IMPORTANT - Check if we've ALREADY created this transaction to avoid duplicates.
             const checkSql = `SELECT id FROM transactions WHERE category = 'Initial Stock Purchase (On Credit)' AND description LIKE ?`;
             const checkDesc = `Initial stock value for product ID ${productId}%`;
 
@@ -28,20 +33,21 @@ async function createInitialStockTransaction(productId, supplierId, purchasePric
                 if (err) return reject(new Error('Failed to check for existing initial stock transaction.'));
                 
                 if (existingTx) {
-                    // Transaction already exists, do nothing.
-                    console.log(`[AUTO-TX] Initial stock transaction for product ${productId} already exists. Skipping.`);
+                    console.log(`[AUTO-TX] Initial stock transaction for product ${productId} already exists (ID: ${existingTx.id}). Skipping creation.`);
                     return resolve();
                 }
 
-                // No existing transaction, so create one.
+                // Step 4: No duplicates found, so create the financial transaction.
+                // This will increase the amount the business owes the supplier.
                 const insertSql = `INSERT INTO transactions (lender_id, amount, description, category, date) VALUES (?, ?, ?, ?, ?)`;
                 const description = `Initial stock value for product ID ${productId} from supplier ID ${supplierId}`;
                 const category = 'Initial Stock Purchase (On Credit)';
                 const date = new Date().toISOString().split('T')[0]; // Use today's date
 
+                // The 'amount' is POSITIVE because it increases the supplier's payable balance.
                 db.run(insertSql, [supplierId, stockValue, description, category, date], function(err) {
                     if (err) return reject(new Error('Failed to create initial stock transaction.'));
-                    console.log(`[AUTO-TX] Automatically created initial stock purchase transaction ID: ${this.lastID} for product ${productId}`);
+                    console.log(`[AUTO-TX] SUCCESS: Automatically created initial stock purchase transaction ID: ${this.lastID} for product ${productId}. Amount: ${stockValue}`);
                     resolve();
                 });
             });
@@ -143,14 +149,13 @@ router.post('/', (req, res) => {
             return res.status(500).json({ error: "Failed to link product to supplier." });
         }
 
-        // --- AUTOMATION LOGIC ---
-        // If this new link is for a preferred supplier, create the initial stock transaction.
+        // --- AUTOMATION LOGIC TRIGGER ---
+        // If this new link is for a preferred supplier and has a price, call our helper.
         if (is_preferred && finalPurchasePrice > 0) {
             try {
                 await createInitialStockTransaction(product_id, supplier_id, finalPurchasePrice);
             } catch (autoTxErr) {
                 console.error("Critical error in automated transaction creation:", autoTxErr.message);
-                // The link was saved, but we should warn the user.
                 return res.status(500).json({ error: "Link saved, but failed to create automated stock transaction. Please check logs."});
             }
         }
@@ -190,10 +195,9 @@ router.put('/:productSupplierId', (req, res) => {
             return res.status(404).json({ error: "Product-supplier link not found." });
         }
 
-        // --- AUTOMATION LOGIC ---
-        // If the update resulted in this supplier becoming preferred, create the transaction.
+        // --- AUTOMATION LOGIC TRIGGER ---
+        // If the update resulted in this supplier becoming preferred, call our helper.
         if (is_preferred && finalPurchasePrice > 0) {
-            // We need the product_id and supplier_id for the helper function
             db.get('SELECT product_id, supplier_id FROM product_suppliers WHERE id = ?', [productSupplierId], async (e, link) => {
                 if (e || !link) {
                     console.error('Could not find link details after update for auto-tx.');

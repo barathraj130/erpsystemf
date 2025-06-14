@@ -691,3 +691,15 @@ label { display: block; margin-bottom: 5px; font-size: 0.85em; font-weight: 500;
 .valuation-net-worth p {
   color: var(--primary-color) !important;
 }
+
+/* --- NEW CSS FOR REPORT VIEW SWITCHER --- */
+.report-view-switcher {
+    margin-bottom: 20px;
+    display: flex;
+    gap: 10px;
+}
+.report-view-switcher .btn.active {
+    background-color: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}

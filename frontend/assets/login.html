@@ -1,3 +1,4 @@
+<!-- START OF FILE login.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5,7 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - ERP System</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
-    <link rel="stylesheet" href="/login.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+    <!-- This path is now correct because login.css is inside the /css/ subfolder -->
+    <link rel="stylesheet" href="/css/login.css">
 </head>
 <body>
     <div class="login-container">
@@ -16,6 +19,8 @@
             </div>
             <h3>Sign In</h3>
             <p>Welcome back! Please enter your details.</p>
+            <p class="signup-link">New Client? <a href="/signup.html">Register Your Company</a></p>
+
             <form id="loginForm">
                 <div class="form-group">
                     <label for="username">Username</label>
@@ -32,37 +37,28 @@
     </div>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            // If a user is already logged in, redirect them away from the login page
             if (localStorage.getItem('erp-token')) {
                 window.location.href = '/';
             }
-
             const loginForm = document.getElementById('loginForm');
             const errorMessage = document.getElementById('errorMessage');
-
             loginForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 errorMessage.textContent = '';
-
                 const username = loginForm.username.value;
                 const password = loginForm.password.value;
-
                 try {
                     const res = await fetch('/api/auth/login', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ username, password })
                     });
-
                     const data = await res.json();
-
                     if (!res.ok) {
                         throw new Error(data.error || 'Login failed');
                     }
-                    
                     localStorage.setItem('erp-token', data.token);
-                    window.location.href = '/'; // Redirect to the main dashboard
-
+                    window.location.href = '/';
                 } catch (error) {
                     errorMessage.textContent = error.message;
                 }

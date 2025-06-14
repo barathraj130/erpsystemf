@@ -1,13 +1,18 @@
+// START OF FILE server.js (Final Corrected Version)
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const db = require('./db');
+const cron = require('node-cron');
+const { exec } = require('child_process');
 
 // --- Middleware Imports ---
 const { auditLogMiddleware } = require('./middlewares/auditLogMiddleware');
 const { authMiddleware, checkAuth, checkRole } = require('./middlewares/authMiddleware');
 
 // --- Route Imports ---
+const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const transactionRoutes = require('./routes/transactionRoutes');
 const ledgerRoutes = require('./routes/ledgerRoutes');
@@ -18,41 +23,23 @@ const productRoutes = require('./routes/productRoutes');
 const productSupplierRoutes = require('./routes/productSupplierRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const auditLogRoutesFromFile = require('./routes/auditLogRoutes');
-const authRoutes = require('./routes/authRoutes');
 
 const app = express();
 
-// --- Core Middleware (Applied First) ---
+// --- 1. Core Middleware ---
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(authMiddleware); // This middleware attempts to decode the user from a token on every request
 
-// --- Static Files Middleware ---
-// This serves CSS, JS, etc. from the root URL. E.g. /css/style.css
-app.use(express.static(path.join(__dirname, 'frontend/assets')));
-
-// --- Custom Request Logging Middleware ---
-app.use((req, res, next) => {
-  console.log(`➡️ ${req.method} ${req.originalUrl}`);
-  if (req.method !== 'GET' && req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
-    const bodyToLog = { ...req.body };
-    if (bodyToLog.password) bodyToLog.password = '[REDACTED]';
-    if (bodyToLog.confirmPassword) bodyToLog.confirmPassword = '[REDACTED]';
-    console.log('   Body:', JSON.stringify(bodyToLog));
-  }
-  next();
-});
-
-// --- Authentication Middleware ---
-app.use(authMiddleware);
-
-// --- API Router Setup ---
+// --- 2. API Routes ---
+// We create a dedicated router for our API to keep it separate.
 const apiRouter = express.Router();
 
-// Public API route (login)
+// Public API routes (like login and signup) that DON'T require a token
 apiRouter.use('/auth', authRoutes);
 
-// Protected API routes
+// Protected API routes that DO require a valid token (enforced by `checkAuth`)
 apiRouter.use('/users', checkAuth, auditLogMiddleware, userRoutes);
 apiRouter.use('/transactions', checkAuth, auditLogMiddleware, transactionRoutes);
 apiRouter.use('/external-entities', checkAuth, auditLogMiddleware, lenderRoutes);
@@ -64,57 +51,71 @@ apiRouter.use('/ledger', checkAuth, ledgerRoutes);
 apiRouter.use('/reports', checkAuth, reportRoutes);
 apiRouter.use('/auditlog', checkAuth, checkRole(['admin']), auditLogRoutesFromFile);
 
-// Mount the entire API router under the /api prefix
+// We tell our main app to use this router for any path starting with `/api`
 app.use('/api', apiRouter);
 
 
-// --- Frontend Route Handling ---
-// This section now correctly handles serving login.html and index.html
+// --- 3. Frontend Routes ---
+// This section now comes AFTER the API section.
 
-// Specifically handle the /login route to serve login.html
+// First, serve static files like CSS and JS. The path `/css/login.css` will be
+// correctly found in `frontend/assets/css/login.css`.
+app.use(express.static(path.join(__dirname, 'frontend/assets')));
+
+// Next, handle explicit requests for our main pages.
 app.get('/login', (req, res) => {
-    // If a user is already logged in, redirect them to the dashboard instead of showing the login page.
-    if (req.user) {
-        return res.redirect('/');
-    }
+    if (req.user) return res.redirect('/');
     res.sendFile(path.join(__dirname, 'frontend/assets/login.html'));
 });
 
-// The catch-all for serving the main app (index.html) for any other route
+app.get('/signup.html', (req, res) => {
+    if (req.user) return res.redirect('/');
+    res.sendFile(path.join(__dirname, 'frontend/assets/signup.html'));
+});
+
+// Finally, the catch-all route for our Single Page Application.
+// This MUST be the last route. It ensures that if a logged-in user refreshes
+// on a page like `/customers`, the main `index.html` is served.
 app.get('*', (req, res) => {
-    // If a user is not logged in, redirect them to the /login page.
     if (!req.user) {
         return res.redirect('/login');
     }
-    // If they are logged in, serve the main application.
     res.sendFile(path.join(__dirname, 'frontend/assets/index.html'));
 });
 
-
-// --- Global Error Handler ---
+// --- 4. Global Error Handler ---
+// This will catch any errors that occur in our API routes.
 app.use((err, req, res, next) => {
   console.error('🆘 Global Server Error Handler Caught:', err.stack || err.message);
   if (res.headersSent) {
     return next(err);
   }
   const statusCode = err.statusCode || 500;
-  const message = err.message || 'Internal Server Error';
+  // Always respond with JSON for errors
   res.status(statusCode).json({
-    error: message,
+    error: err.message || 'Internal Server Error',
     details: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
 });
 
 
-// --- Start Server ---
+// --- Server Start and Backup Scheduler ---
+// (This part is unchanged and correct)
+cron.schedule('0 2 * * *', () => {
+    console.log('🕒 Running daily backup job...');
+    exec('node backup.js', (error, stdout, stderr) => {
+      if (error) { console.error(`❌ Backup failed: ${error.message}`); return; }
+      if (stderr) { console.error(`❌ Backup stderr: ${stderr}`); return; }
+      console.log(`💡 Backup script output: ${stdout.trim()}`);
+    });
+  }, { scheduled: true, timezone: "Asia/Kolkata" });
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
-  db.get("SELECT 1", (err) => {
-      if(err) {
-        console.error("❌ SQLite test query failed: " + err.message);
-      } else {
-        console.log("✅ SQLite DB connection OK.");
-      }
-  });
+    console.log(`🚀 Server running at http://localhost:${PORT}`);
+    console.log('🕒 Daily backup scheduled for 2:00 AM.');
+    db.get("SELECT 1", (err) => {
+        if (err) { console.error("❌ SQLite test query failed: " + err.message); }
+        else { console.log("✅ SQLite DB connection OK."); }
+    });
 });
