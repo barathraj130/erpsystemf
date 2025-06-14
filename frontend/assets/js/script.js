@@ -2287,6 +2287,8 @@ async function loadCustomerSummaries() {
         }
     }
 }
+// in script.js, find and replace the loadSupplierSummaries function
+
 async function loadSupplierSummaries() {
     const supplierTableBody = document.getElementById("supplierTableBody");
     if(!supplierTableBody) return;
@@ -2302,9 +2304,13 @@ async function loadSupplierSummaries() {
             return;
         }
 
-        suppliers.forEach((supplier) => {
+        // --- THIS IS THE CHANGE ---
+        suppliers.forEach((supplier, index) => { // Added 'index' for the serial number
             const row = supplierTableBody.insertRow();
-            row.insertCell().textContent = supplier.id;
+            
+            // Use the index + 1 for the Serial Number
+            row.insertCell().textContent = index + 1; 
+            
             row.insertCell().textContent = supplier.lender_name;
             row.insertCell().textContent = supplier.contact_person || "-";
             
@@ -2319,8 +2325,16 @@ async function loadSupplierSummaries() {
                       : "";
 
             row.insertCell().textContent = supplier.notes || "-";
-            row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="viewBusinessExternalTransactions('${supplier.lender_name.replace(/'/g, "\\'")}', 'Supplier', ${supplier.id})"><i class="fas fa-list-alt"></i></button> <button class='btn btn-primary btn-sm' onclick='openLenderModal(${JSON.stringify(supplier)}, "Supplier")'><i class="fas fa-edit"></i></button>`;
+            
+            // Add the new "Actions" cell with all buttons
+            const actionsCell = row.insertCell();
+            actionsCell.innerHTML = `
+                <button class="btn btn-sm btn-info" onclick="viewBusinessExternalTransactions('${supplier.lender_name.replace(/'/g, "\\'")}', 'Supplier', ${supplier.id})"><i class="fas fa-list-alt"></i></button> 
+                <button class='btn btn-primary btn-sm' onclick='openLenderModal(${JSON.stringify(supplier)}, "Supplier")'><i class="fas fa-edit"></i></button>
+                <button class='btn btn-danger btn-sm' onclick='deleteLender(${supplier.id})'><i class="fas fa-trash"></i></button> <!-- Added Delete Button -->
+            `;
         });
+        // --- END OF CHANGE ---
 
         if (supplierTableBody.rows.length === 0 && suppliers.length > 0) {
             supplierTableBody.innerHTML =
@@ -2815,6 +2829,8 @@ async function loadProducts() {
     }
 }
 
+// in script.js
+
 function displayProducts() {
     const tableBody = document.getElementById("productTableBody");
     if(!tableBody) return;
@@ -2824,9 +2840,19 @@ function displayProducts() {
             '<tr><td colspan="9" style="text-align:center;">No products found. Add one.</td></tr>';
         return;
     }
-    productsCache.forEach((product) => {
+
+    // Use the second argument 'index' from forEach, which is the 0-based position in the array.
+    productsCache.forEach((product, index) => {
         const row = tableBody.insertRow();
-        row.insertCell().textContent = product.id;
+        
+        // --- THIS IS THE CHANGE ---
+        // OLD WAY:
+        // row.insertCell().textContent = product.id; 
+
+        // NEW WAY: Display the loop index + 1 as the Serial Number (S.No.)
+        row.insertCell().textContent = index + 1; 
+        // --- END OF CHANGE ---
+
         row.insertCell().textContent = product.product_name;
         row.insertCell().textContent = product.sku || "-";
         row.insertCell().textContent = product.preferred_supplier_name || "-";

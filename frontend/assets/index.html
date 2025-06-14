@@ -208,6 +208,7 @@
   </table>
 </section>
 
+<!-- in index.html, find this section -->
 <section id="supplierManagementSection" class="app-section table-container" style="display: none;">
     <div class="section-header">
       <h2>Supplier Management</h2>
@@ -217,7 +218,20 @@
       </div>
     </div>
     <table id="supplierTable">
-    <thead><tr><th>ID</th><th>Supplier Name</th><th>Contact</th><th>Current Payable (₹)</th><th>Notes</th><th>Actions</th></tr></thead>
+    
+    <!-- --- THIS IS THE CHANGE --- -->
+    <thead>
+        <tr>
+            <th>S.No.</th> <!-- Changed from ID -->
+            <th>Supplier Name</th>
+            <th>Contact</th>
+            <th>Current Payable (₹)</th>
+            <th>Notes</th>
+            <th>Actions</th> <!-- Added this column -->
+        </tr>
+    </thead>
+    <!-- --- END OF CHANGE --- -->
+    
     <tbody id="supplierTableBody"></tbody>
   </table>
 </section>
@@ -230,10 +244,14 @@
         <button class="btn btn-primary" onclick="openProductModal()">+ Add New Product</button>
       </div>
     </div>
-    <table id="productTable">
+    <!-- in index.html, inside the inventoryManagementSection -->
+
+<table id="productTable">
     <thead>
       <tr>
-        <th>ID</th>
+        <!-- --- THIS IS THE CHANGE --- -->
+        <th>S.No.</th> <!-- Changed from "ID" -->
+        <!-- --- END OF CHANGE --- -->
         <th>Product Name</th>
         <th>SKU</th>
         <th>Preferred Supplier</th>
@@ -245,7 +263,7 @@
       </tr>
     </thead>
     <tbody id="productTableBody"></tbody>
-  </table>
+</table>
 </section>
 
 <section id="invoiceManagementSection" class="app-section table-container" style="display: none;">

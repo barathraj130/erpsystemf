@@ -133,6 +133,9 @@ router.put('/:id', (req, res) => {
 });
 
 // Delete an external entity
+// ... other routes
+
+// Delete an external entity
 router.delete('/:id', (req, res) => {
   const { id } = req.params;
   db.run('DELETE FROM lenders WHERE id = ?', [id], function (err) {
