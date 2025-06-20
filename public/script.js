@@ -2827,10 +2827,24 @@ function displayProducts() {
             '<tr><td colspan="9" style="text-align:center;">No products found. Add one.</td></tr>';
         return;
     }
+<<<<<<< HEAD:public/script.js
     let serialNumber = 1;
     productsCache.forEach((product) => {
         const row = tableBody.insertRow();
         row.insertCell().textContent = serialNumber++;
+=======
+
+    // --- THIS IS THE CHANGE ---
+    const totalProducts = productsCache.length; // Get the total count first
+
+    productsCache.forEach((product, index) => {
+        const row = tableBody.insertRow();
+        
+        // Calculate the descending serial number
+        row.insertCell().textContent = totalProducts - index; 
+        
+        // The rest of the function remains the same
+>>>>>>> 53626221a64f67067318a3be819e4780e39f8d09:frontend/assets/js/script.js
         row.insertCell().textContent = product.product_name;
         row.insertCell().textContent = product.sku || "-";
         row.insertCell().textContent = product.preferred_supplier_name || "-";
@@ -2854,6 +2868,7 @@ function displayProducts() {
             <button class='btn btn-danger btn-sm' onclick='deleteProduct(${product.id})'><i class="fas fa-trash"></i></button>
         `;
     });
+    // --- END OF CHANGE ---
 }
 
 async function openProductModal(productIdOrNull = null) {

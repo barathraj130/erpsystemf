@@ -1,12 +1,11 @@
 // routes/productRoutes.js
+// routes/productRoutes.js
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
 // Get all products
 router.get('/', (req, res) => {
-    // Added is_preferred and default purchase_price from product_suppliers for a quick overview
-    // This might get slow with many products/suppliers; consider optimizing if needed.
     const sql = `
         SELECT 
             p.*,
@@ -18,7 +17,7 @@ router.get('/', (req, res) => {
              FROM product_suppliers ps_pref 
              WHERE ps_pref.product_id = p.id AND ps_pref.is_preferred = 1 LIMIT 1) as preferred_supplier_purchase_price
         FROM products p 
-        ORDER BY p.product_name ASC
+        ORDER BY p.id DESC  -- <<< THIS IS THE CHANGE: From product_name ASC to id DESC
     `;
     db.all(sql, [], (err, rows) => {
         if (err) {
@@ -28,6 +27,10 @@ router.get('/', (req, res) => {
         res.json(rows || []);
     });
 });
+
+// ... rest of the file remains the same ...
+
+module.exports = router;
 
 // Get a single product by ID, including its linked suppliers
 router.get('/:id', (req, res) => {
