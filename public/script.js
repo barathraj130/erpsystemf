@@ -1,4 +1,4 @@
-const API = "/api";
+const API = "http://localhost:3000/api";
 let editingUserId = null;
 let editingTxnId = null;
 let editingLenderId = null;
@@ -47,19 +47,17 @@ const transactionCategories = [
     { name: "Payment Received from Customer", type: "unknown_income_OR_asset_decrease", group: "customer_payment", affectsLedger: "unknown", relevantTo: "customer" }, // Added for calculation (generic)
 
     // Customer Loans
-    { name: "Loan Disbursed to Customer (from Cash)", type: "cash_expense_asset", group: "customer_loan_out", affectsLedger: "cash", relevantTo: "customer" },
-    { name: "Loan Disbursed to Customer (from Bank)", type: "bank_expense_asset", group: "customer_loan_out", affectsLedger: "bank", relevantTo: "customer" },
+    { name: "Loan Disbursed to Customer (Cash)", type: "cash_expense_asset", group: "customer_loan_out", affectsLedger: "cash", relevantTo: "customer" },
+    { name: "Loan Disbursed to Customer (Bank)", type: "bank_expense_asset", group: "customer_loan_out", affectsLedger: "bank", relevantTo: "customer" },
     { name: "Loan Repayment Received from Customer (Cash)", type: "cash_income", group: "customer_loan_in", affectsLedger: "cash", relevantTo: "customer" },
     { name: "Loan Repayment Received from Customer (Bank)", type: "bank_income", group: "customer_loan_in", affectsLedger: "bank", relevantTo: "customer" },
     { name: "Interest on Customer Loan Received (Cash)", type: "cash_income", group: "customer_loan_in", affectsLedger: "cash", relevantTo: "customer" },
     { name: "Interest on Customer Loan Received (Bank)", type: "bank_income", group: "customer_loan_in", affectsLedger: "bank", relevantTo: "customer" },
-    
     // Customer Chits
     { name: "Chit Installment Received from Customer (Cash)", type: "cash_income", group: "customer_chit_in", affectsLedger: "cash", relevantTo: "customer" },
     { name: "Chit Installment Received from Customer (Bank)", type: "bank_income", group: "customer_chit_in", affectsLedger: "bank", relevantTo: "customer" },
     { name: "Chit Payout Made to Customer (Cash)", type: "cash_expense", group: "customer_chit_out", affectsLedger: "cash", relevantTo: "customer" },
     { name: "Chit Payout Made to Customer (Bank)", type: "bank_expense", group: "customer_chit_out", affectsLedger: "bank", relevantTo: "customer" },
-    
     // Customer Returns
     { name: "Product Return from Customer (Credit Note)", type: "receivable_decrease", group: "customer_return", isProductSale: true, affectsLedger: "none", relevantTo: "customer" },
     { name: "Product Return from Customer (Refund via Cash)", type: "cash_expense", group: "customer_return", isProductSale: true, affectsLedger: "cash", relevantTo: "customer" },
@@ -71,11 +69,9 @@ const transactionCategories = [
     { name: "Purchase from Supplier (Cash)", type: "cash_expense", group: "supplier_expense", isProductPurchase: true, affectsLedger: "cash", relevantTo: "lender" },
     { name: "Purchase from Supplier (Bank)", type: "bank_expense", group: "supplier_expense", isProductPurchase: true, affectsLedger: "bank", relevantTo: "lender" },
     { name: "Initial Stock Purchase (On Credit)", type: "payable_increase", group: "supplier_expense", isProductPurchase: true, affectsLedger: "none", relevantTo: "lender" }, // For auto-creation
-    
     // Payments to Suppliers
     { name: "Payment Made to Supplier (Cash)", type: "cash_expense", group: "supplier_payment", affectsLedger: "cash", relevantTo: "lender" },
     { name: "Payment Made to Supplier (Bank)", type: "bank_expense", group: "supplier_payment", affectsLedger: "bank", relevantTo: "lender" },
-    
     // Returns to Suppliers
     { name: "Product Return to Supplier (Credit Received)", type: "payable_decrease", group: "supplier_return", isProductPurchase: true, affectsLedger: "none", relevantTo: "lender" },
     { name: "Product Return to Supplier (Cash Refund)", type: "cash_income", group: "supplier_return", isProductPurchase: true, affectsLedger: "cash", relevantTo: "lender" },
@@ -84,7 +80,7 @@ const transactionCategories = [
     // --- Business Finance Transactions (External Entities - Lenders, Banks, Chit Providers) ---
     // Loans Taken by Business
     { name: "Loan Received by Business (to Bank)", type: "bank_income_liability", group: "biz_loan_in", affectsLedger: "bank", relevantTo: "lender" },
-    { name: "Loan Received by Business (to Cash)", type: "cash_income_liability", group: "biz_loan_in", affectsLedger: "cash", relevantTo: "lender" },
+    { name: "Loan Received by Business (Cash)", type: "cash_income_liability", group: "biz_loan_in", affectsLedger: "cash", relevantTo: "lender" },
     { name: "Loan Principal Repaid by Business (from Bank)", type: "bank_expense", group: "biz_loan_repay", affectsLedger: "bank", relevantTo: "lender" },
     { name: "Loan Principal Repaid by Business (from Cash)", type: "cash_expense", group: "biz_loan_repay", affectsLedger: "cash", relevantTo: "lender" },
     { name: "Loan Interest Paid by Business (from Bank)", type: "bank_expense", group: "biz_loan_repay", affectsLedger: "bank", relevantTo: "lender" },
@@ -101,7 +97,6 @@ const transactionCategories = [
     { name: "Cash Deposited to Bank", type: "neutral_cash_movement", group: "bank_ops", affectsLedger: "both_cash_out_bank_in", relevantTo: "none" },
     { name: "Cash Withdrawn from Bank", type: "neutral_cash_movement", group: "bank_ops", affectsLedger: "both_cash_in_bank_out", relevantTo: "none" },
     { name: "Bank Charges", type: "bank_expense", group: "bank_ops", affectsLedger: "bank", relevantTo: "none" }, // Typically bank only
-    
     // General Business Operations
     { name: "Rent Paid (Cash)", type: "cash_expense", group: "biz_ops", affectsLedger: "cash", relevantTo: "none" },
     { name: "Rent Paid (Bank)", type: "bank_expense", group: "biz_ops", affectsLedger: "bank", relevantTo: "none" },
@@ -185,46 +180,34 @@ async function apiFetch(endpoint, options = {}) {
     return res;
 }
 
-// FIX: This is the new, more robust application entry point logic.
+// The original DOMContentLoaded listener now only contains the app setup logic
+// and will only run if the user is authenticated and on the main page.
 document.addEventListener("DOMContentLoaded", () => {
-    // This script runs on all pages (login.html, index.html)
-    // We need to determine which page we're on.
-    const isAuthPage = window.location.pathname.endsWith('/login.html') || window.location.pathname.endsWith('/signup.html');
-
-    // If we are NOT on an auth page, we must be logged in.
-    if (!isAuthPage) {
-        // If there's no token, redirect to login immediately.
-        if (!localStorage.getItem('erp-token')) {
-            window.location.replace('/login.html');
-            return; // Stop further execution
-        }
-        // If a token exists, initialize the main application.
-        initializeApp();
-    } 
-    // If we ARE on an auth page, no further action is needed here.
-    // The script in login.html will handle the form submission.
+    // Only run setup if we are on the main page, not the login page.
+    if (window.location.pathname.endsWith('/login.html') || window.location.pathname.endsWith('/login')) {
+        return;
+    }
+    
+    // This part of the code now assumes a valid token exists.
+    initializeApp();
 });
 
 async function initializeApp() {
     try {
         const res = await apiFetch(`${API}/auth/me`);
-        if (!res || !res.ok) {
-            // This happens if the token is present but invalid (e.g., expired, tampered).
-            throw new Error('Session is invalid or expired. Please log in again.');
-        }
+        if (!res || !res.ok) throw new Error('Session invalid');
         
         currentUser = await res.json();
         console.log("Authenticated user:", currentUser);
 
-        // If we successfully get user data, proceed to build the app UI.
         updateHeaderProfile(currentUser);
         setupEventListeners();
         loadInitialData();
         setupNavigation();
 
     } catch (error) {
-        console.error("Authentication check failed:", error.message);
-        logout(); // The token was bad, so clear it and redirect to login.
+        console.error("Authentication check failed:", error);
+        logout(); // Clear bad token and redirect
     }
 }
 
@@ -239,6 +222,7 @@ function updateHeaderProfile(user) {
 
 function logout() {
     localStorage.removeItem('erp-token');
+    // Clear all cached data to prevent stale info on next login
     currentUser = null;
     usersDataCache = [];
     allTransactionsCache = [];
@@ -246,14 +230,13 @@ function logout() {
     businessAgreementsCache = [];
     productsCache = [];
     invoicesCache = [];
-    window.location.replace('/login.html');
+    window.location.replace('/login');
 }
 
 
 function getSectionIdFromPath(path = window.location.pathname) {
     const map = {
         '/': 'dashboardAnalytics',
-        '/index.html': 'dashboardAnalytics',
         '/dashboard': 'dashboardAnalytics',
         '/customers': 'customerManagementSection',
         '/suppliers': 'supplierManagementSection',
@@ -332,10 +315,6 @@ function getDefaultBusinessProfile() {
 }
 
 function setupEventListeners() {
-    const companyExpenseForm = document.getElementById("companyExpenseForm");
-    if(companyExpenseForm) companyExpenseForm.addEventListener('submit', handleCompanyExpenseSubmit);
-
-    document.getElementById("loanFundsReceiptForm").addEventListener('submit', handleLoanFundsReceiptSubmit);
     document
         .getElementById("userForm")
         .addEventListener("submit", handleUserSubmit);
@@ -358,10 +337,7 @@ function setupEventListeners() {
         .getElementById("productSupplierLinkForm")
         .addEventListener("submit", handleProductSupplierLinkSubmit);
     document.getElementById('repayLoanForm').addEventListener('submit', handleLoanRepaymentSubmit);
-    document.getElementById("loanFundsReceiptForm").addEventListener('submit', handleLoanFundsReceiptSubmit);
-    document
-        .getElementById("userForm")
-        .addEventListener("submit", handleUserSubmit);
+
     const userTxHistoryFilter = document.getElementById(
         "userTxHistoryCategoryFilter",
     );
@@ -552,10 +528,9 @@ function navigateToSection(sectionId) {
         else if (headerText.includes("Inventory")) headerText = "Inventory Management";
         else if (headerText.includes("Invoices")) headerText = "Invoice Management";
         else if (headerText.includes("Transactions")) headerText = "All Transactions";
-        else if (headerText.includes("Company")) headerText = "Company Operations";
         else if (headerText.includes("Ledgers")) headerText = "Business Ledgers";
         else if (headerText.includes("Business Finance")) headerText = "Business Finance";
-        else if (headerText.includes("Reports")) headerText = "Reports & Analytics";
+        else if (headerText.includes("Reports")) headerText = "Reports & Analytics"; // Updated header text
 
         if(mainHeader) mainHeader.textContent = headerText;
 
@@ -573,11 +548,7 @@ function navigateToSection(sectionId) {
             loadInvoices();
         } else if (sectionId === "allTransactionsSection") {
             loadAllTransactions();
-        } 
-          else if (sectionId === "companySection") {
-            loadAndDisplayCompanyExpenses();
-        }
-         else if (sectionId === "ledgersSection") {
+        } else if (sectionId === "ledgersSection") {
             showLedger('cash');
         } else if (sectionId === "businessFinanceSection") {
             loadAllTransactions().then(() => {
@@ -587,6 +558,7 @@ function navigateToSection(sectionId) {
                 });
             });
         } else if (sectionId === "reportsSection") {
+            // New logic for reports section navigation
             const reportPeriodMonth = document.getElementById('reportPeriodMonth');
             if (reportPeriodMonth) {
                 reportPeriodMonth.value = new Date().toISOString().slice(0, 7);
@@ -615,22 +587,18 @@ function navigateToSection(sectionId) {
 
 
 function setupNavigation() {
-    console.log("setupNavigation: Attaching navigation event listeners.");
+    console.log("setupNavigation CALLED"); // Debug
     const navItems = document.querySelectorAll(".sidebar-nav .nav-item");
-    
-    if (navItems.length === 0) {
-        console.error("setupNavigation: No navigation items found with '.sidebar-nav .nav-item'.");
-        return;
-    }
+    console.log(`Found ${navItems.length} nav items to attach listeners to.`); // Debug
 
     navItems.forEach(item => {
-        if (item.dataset.section) {
-            item.addEventListener("click", (e) => {
-                e.preventDefault();
-                const sectionId = item.dataset.section;
-                navigateToSection(sectionId);
-            });
-        }
+        console.log(`Attaching listener to: ${item.dataset.section}`); // Debug
+        item.addEventListener("click", (e) => {
+            e.preventDefault();
+            const sectionId = item.dataset.section;
+            console.log(`CLICKED on nav item for sectionId: ${sectionId}`); // Debug
+            navigateToSection(sectionId);
+        });
     });
 }
 function getPeriodDateRanges(period) {
@@ -683,7 +651,12 @@ function calculatePercentageChange(current, previous) {
     return ((current - previous) / Math.abs(previous)) * 100;
 }
 
+// In script.js, find and replace this function
+
 function updateDashboardCards() {
+    console.log("updateDashboardCards CALLED");
+    
+    // --- THIS IS THE KEY CHANGE for the dashboard counts ---
     const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
 
     document.getElementById('navCustomerCount').textContent = customersOnly.length;
@@ -710,6 +683,7 @@ function updateDashboardCards() {
         }
     });
 
+    // Use the filtered 'customersOnly' array for this calculation
     customersOnly.forEach(user => {
         const joinDate = new Date(user.created_at);
         if (joinDate >= ranges.currentStart && joinDate <= ranges.currentEnd) {
@@ -717,15 +691,18 @@ function updateDashboardCards() {
         }
     });
 
+    // --- Update KPI Card DOM Elements ---
     document.getElementById("monthlyRevenue").textContent = `₹${currentRevenue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
     const revenueChangeEl = document.getElementById("revenueChange");
     const revenueChangePercent = calculatePercentageChange(currentRevenue, previousRevenue);
     revenueChangeEl.textContent = `${revenueChangePercent >= 0 ? '+' : ''}${revenueChangePercent.toFixed(1)}%`;
     revenueChangeEl.className = revenueChangePercent >= 0 ? 'kpi-change positive' : 'kpi-change negative';
 
+    // Update the total customer count to also use the filtered list
     document.getElementById("totalCustomers").textContent = customersOnly.length;
     document.getElementById("customersChange").textContent = `+${newCustomersCurrent} new`;
     
+    // --- Non-period-based KPI calculations (these are totals, not period-dependent) ---
     document.getElementById("totalProducts").textContent = productsCache.length;
 
     const pendingInv = invoicesCache.filter(inv => inv.status !== "Paid" && inv.status !== "Void");
@@ -738,6 +715,7 @@ function updateDashboardCards() {
     lowStockAlertEl.textContent = `${lowStockCount} low stock`;
     lowStockAlertEl.style.color = lowStockCount > 0 ? 'var(--danger-color)' : 'var(--text-light-color)';
     
+    // --- Today's Sales Calculation ---
     const todayStr = new Date().toISOString().split('T')[0];
     const todaysInvoices = invoicesCache.filter(inv => inv.invoice_date.startsWith(todayStr) && inv.status !== 'Void' && inv.status !== 'Draft');
     const todaysRevenue = todaysInvoices.reduce((sum, inv) => sum + parseFloat(inv.amount_before_tax || 0), 0);
@@ -747,7 +725,12 @@ function updateDashboardCards() {
     document.getElementById('todayOrders').textContent = todaysInvoices.length;
     document.getElementById('todayAvgOrder').textContent = `₹${avgOrderValue.toFixed(2)}`;
 }
+// In script.js
 
+// Replace the existing populateUserDropdown function with this one.
+// In script.js
+
+// Replace the existing populateUserDropdown function with this one
 async function populateUserDropdown() {
     try {
         if (!Array.isArray(usersDataCache) || (usersDataCache.length === 0 && !isLoadingUsers)) {
@@ -757,11 +740,14 @@ async function populateUserDropdown() {
         const dropdown = document.getElementById("transaction_user_id");
         if (!dropdown) return;
 
+        // --- THIS IS THE KEY CORRECTION ---
+        // Filter out any user with the 'admin' role
         const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
 
         const currentValue = dropdown.value;
         dropdown.innerHTML = '<option value="">Select Customer...</option>';
         
+        // Use the filtered 'customersOnly' array to build the options
         if (Array.isArray(customersOnly)) {
             customersOnly.forEach((user) => {
                 const option = document.createElement("option");
@@ -772,6 +758,7 @@ async function populateUserDropdown() {
         }
 
         if (currentValue) {
+            // Check if the previously selected value still exists in the filtered list
             const exists = customersOnly.some((user) => user.id == currentValue);
             if (exists) {
                 dropdown.value = currentValue;
@@ -781,6 +768,7 @@ async function populateUserDropdown() {
         console.error("Error populating user dropdown:", error.message);
     }
 }
+// Modified to populate with baseTransactionCategories
 function populateTransactionCategoryDropdown() {
     const dropdown = document.getElementById("category"); 
     if (!dropdown) {
@@ -882,6 +870,7 @@ async function loadUsers() {
 }
 
 async function loadAllTransactions() {
+    console.log("Attempting to load all transactions..."); 
     if (isLoadingTransactions) return allTransactionsCache;
     isLoadingTransactions = true;
     try {
@@ -896,13 +885,16 @@ async function loadAllTransactions() {
             );
         }
         const data = await res.json();
+        console.log("Data from /api/transactions:", data); 
         allTransactionsCache = Array.isArray(data) ? data : [];
+        console.log("allTransactionsCache populated:", allTransactionsCache); 
         displayTransactions(allTransactionsCache); 
         updateDashboardCards();
         loadRecentActivity(); 
         return allTransactionsCache;
     } catch (error) {
         console.error("Error loading transactions:", error.message);
+        allTransactionsCache = [];
         const tableBody = document.getElementById("transactionTable")?.querySelector("tbody");
         if (tableBody) tableBody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:red;">Error loading transactions. Check console.</td></tr>';
         return [];
@@ -912,6 +904,7 @@ async function loadAllTransactions() {
 }
 
 function displayTransactions(transactionsToDisplay) {
+    console.log("displayTransactions called with:", transactionsToDisplay); 
     const table = document.getElementById("transactionTable");
     if (!table) {
         console.error("Transaction table not found in DOM for displayTransactions");
@@ -1443,8 +1436,8 @@ async function openTransactionModal(
     isBusinessExternal = false,
     preselectLenderId = null,
     preselectAgreementId = null,
-    preselectCategory = null,
 ) {
+    console.log("openTransactionModal called with tx:", tx, "preselectUserId:", preselectUserId, "isBusinessExternal:", isBusinessExternal, "preselectLenderId:", preselectLenderId, "preselectAgreementId:", preselectAgreementId);
     const modal = document.getElementById("transactionModal");
     const form = document.getElementById("transactionForm");
     const modalTitleElement = document.getElementById("transactionModalTitle");
@@ -1465,26 +1458,23 @@ async function openTransactionModal(
     const forLenderRadio = document.getElementById("txPartyTypeLender");
     const paymentModeGroup = document.getElementById("paymentModeGroup");
 
-    const partySelectionDiv = forCustomerRadio.closest('.form-group.radio-group');
 
     if (
         !modal || !form || !modalTitleElement || !userDropdown || !lenderDropdown || !agreementDropdown ||
         !amountField || !categoryDropdown || !descriptionField || !dateField ||
-        !lineItemsSection || !lineItemsTableBody || !forCustomerRadio || !forLenderRadio || !paymentModeGroup || !partySelectionDiv
+        !lineItemsSection || !lineItemsTableBody || !forCustomerRadio || !forLenderRadio || !paymentModeGroup
     ) {
-        console.error("One or more elements in transactionModal are missing!");
-        alert("Error: Transaction modal components not found.");
-        return;
+        console.error("One or more elements in transactionModal are missing!"); alert("Error: Transaction modal components not found."); return;
     }
 
     form.reset();
     if (lineItemsTableBody) lineItemsTableBody.innerHTML = "";
     updateTxGrandTotal();
 
-    if (usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
-    if (externalEntitiesCache.length === 0 && !isLoadingLenders) await loadLenders();
-    if (businessAgreementsCache.length === 0 && !isLoadingBusinessAgreements) await loadBusinessExternalFinanceAgreements();
-    if (productsCache.length === 0 && !isLoadingProducts) await loadProducts();
+    if(usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
+    if(externalEntitiesCache.length === 0 && !isLoadingLenders) await loadLenders();
+    if(businessAgreementsCache.length === 0 && !isLoadingBusinessAgreements) await loadBusinessExternalFinanceAgreements();
+    if(productsCache.length === 0 && !isLoadingProducts) await loadProducts();
 
     await populateUserDropdown();
     await populateLenderDropdownForTxModal();
@@ -1494,18 +1484,12 @@ async function openTransactionModal(
     const amountLabel = document.querySelector('label[for="amount"]');
     const newCategoryDropdown = categoryDropdown.cloneNode(true);
     categoryDropdown.parentNode.replaceChild(newCategoryDropdown, categoryDropdown);
-
+    
     newCategoryDropdown.onchange = () => {
         const selectedBaseCategoryName = newCategoryDropdown.value;
         const baseCatInfo = baseTransactionCategories.find(c => c.name === selectedBaseCategoryName);
         console.log("Base Category Changed. Info:", baseCatInfo);
         
-        if (baseCatInfo && baseCatInfo.relevantTo === 'none') {
-            partySelectionDiv.style.display = 'none';
-        } else {
-            partySelectionDiv.style.display = 'flex';
-        }
-
         const isProductInvolved = baseCatInfo && (baseCatInfo.isProductSale || baseCatInfo.isProductPurchase);
 
         if (lineItemsSection) lineItemsSection.style.display = isProductInvolved ? "block" : "none";
@@ -1513,20 +1497,21 @@ async function openTransactionModal(
         if (amountLabel) amountLabel.textContent = (baseCatInfo && isProductInvolved) ? "Total Item Amount (₹):" : "Amount (₹):";
         if (amountField) amountField.readOnly = !!isProductInvolved;
         if (isProductInvolved && lineItemsTableBody && lineItemsTableBody.rows.length === 0) addTxLineItemRow();
-        if (isProductInvolved) updateTxGrandTotal();
+        if(isProductInvolved) updateTxGrandTotal();
 
-        if (baseCatInfo && baseCatInfo.relevantTo) {
-            if (baseCatInfo.relevantTo === 'customer') forCustomerRadio.checked = true;
+        if(baseCatInfo && baseCatInfo.relevantTo) {
+            if(baseCatInfo.relevantTo === 'customer') forCustomerRadio.checked = true;
             else if (baseCatInfo.relevantTo === 'lender') forLenderRadio.checked = true;
             toggleTxPartyDropdowns();
-        } else if (!editingTxnId && baseCatInfo && baseCatInfo.relevantTo !== 'none') {
-            forCustomerRadio.checked = true;
-            toggleTxPartyDropdowns();
+        } else if (!editingTxnId && baseCatInfo) {
+             forCustomerRadio.checked = true;
+             toggleTxPartyDropdowns();
         }
-
+         
         if (baseCatInfo && baseCatInfo.needsPaymentMode) document.getElementById("txPayModeCash").checked = true;
         else if (baseCatInfo && !baseCatInfo.needsPaymentMode) document.getElementsByName("txPaymentMode").forEach(radio => radio.checked = false);
     };
+
     if (tx) { // Editing existing transaction
         editingTxnId = tx.id;
         modalTitleElement.textContent = `Edit Transaction #${tx.id}`;
@@ -1587,17 +1572,15 @@ async function openTransactionModal(
             modalTitleElement.textContent = "New Transaction";
             forCustomerRadio.checked = true;
         }
-        if (preselectCategory) {
-            newCategoryDropdown.value = preselectCategory;
-            newCategoryDropdown.dispatchEvent(new Event('change'));
-        }
-    
+        toggleTxPartyDropdowns();
+        newCategoryDropdown.dispatchEvent(new Event('change'));
     }
     modal.style.display = "block";
 }
 
 async function handleTransactionSubmit(e) {
     e.preventDefault();
+    console.log("--- handleTransactionSubmit: START ---");
 
     const userIdInput = document.getElementById("transaction_user_id").value;
     const lenderIdInput = document.getElementById("transaction_lender_id").value;
@@ -1608,13 +1591,15 @@ async function handleTransactionSubmit(e) {
     const lenderId = (!isForCustomer && lenderIdInput && lenderIdInput !== "") ? parseInt(lenderIdInput) : null;
     const agreementId = (!isForCustomer && agreementIdInput && agreementIdInput !== "" && document.getElementById("transaction_agreement_id").style.display !== 'none') ? parseInt(agreementIdInput) : null;
 
-    const baseCategoryName = document.getElementById("category").value;
+    const baseCategoryName = document.getElementById("category").value; // This is the base category name
     const baseCatInfo = baseTransactionCategories.find(cat => cat.name === baseCategoryName);
 
     if (!baseCatInfo) {
         alert("Invalid base category selected.");
+        console.error("--- handleTransactionSubmit: END - Invalid base category ---");
         return;
     }
+    console.log("Base Category Name:", baseCategoryName, "Base Category Info:", baseCatInfo);
 
     let paymentMode = null;
     const paymentModeGroup = document.getElementById("paymentModeGroup");
@@ -1622,23 +1607,28 @@ async function handleTransactionSubmit(e) {
         const paymentModeRadios = document.getElementsByName("txPaymentMode");
         for (const radio of paymentModeRadios) {
             if (radio.checked) {
-                paymentMode = radio.value;
+                paymentMode = radio.value; // "Cash", "Bank", or "On Credit"
                 break;
             }
         }
         if (!paymentMode) {
             alert("Please select a payment mode for this category.");
+            console.error("--- handleTransactionSubmit: END - Payment mode required but not selected ---");
             return;
         }
     } else if (!baseCatInfo.needsPaymentMode) {
         paymentMode = baseCatInfo.fixedPaymentMode || "none"; 
     }
+    console.log("Selected Payment Mode:", paymentMode);
     
     const categoryDetails = getFullCategoryDetails(baseCategoryName, paymentMode);
     const fullCategoryName = categoryDetails.fullCategoryName;
+    console.log("Full Category Details from helper:", categoryDetails);
+    console.log("Constructed Full Category Name:", fullCategoryName);
 
     if (!fullCategoryName || (fullCategoryName === baseCategoryName && baseCatInfo.needsPaymentMode && paymentMode !== "On Credit" && !baseCatInfo.fixedPaymentMode)) {
         alert(`Could not determine full category for '${baseCategoryName}' with payment mode '${paymentMode}'. Please check category definitions.`);
+        console.error("--- handleTransactionSubmit: END - Could not determine full category ---");
         return;
     }
 
@@ -1658,10 +1648,12 @@ async function handleTransactionSubmit(e) {
         });
         if (lineItems.length === 0 && (baseCatInfo.isProductSale || baseCatInfo.isProductPurchase)) {
             alert("For product sales/purchases, please add at least one valid line item.");
+            console.error("--- handleTransactionSubmit: END - Missing line items for product transaction ---");
             return;
         }
         totalAmountInputValue = parseFloat(document.getElementById("txLineItemsGrandTotal").textContent) || 0;
     }
+    console.log("Total Amount Input Value:", totalAmountInputValue);
 
     const transactionDate = document.getElementById("date").value;
     const transactionDescription = document.getElementById("description").value.trim();
@@ -1671,10 +1663,11 @@ async function handleTransactionSubmit(e) {
          !isProductInvolved 
        ) {
         alert("Amount must be a positive number (unless it's a pure stock quantity adjustment or calculated from line items).");
+        console.error("--- handleTransactionSubmit: END - Invalid amount ---");
         return;
     }
-    if (!baseCategoryName) { alert("Please select a base category."); return; }
-    if (!transactionDate) { alert("Date is required."); return; }
+    if (!baseCategoryName) { alert("Please select a base category."); console.error("--- handleTransactionSubmit: END - No base category ---"); return; }
+    if (!transactionDate) { alert("Date is required."); console.error("--- handleTransactionSubmit: END - No date ---"); return; }
 
     let finalAmount = totalAmountInputValue;
 
@@ -1704,6 +1697,8 @@ async function handleTransactionSubmit(e) {
         }
         else finalAmount = totalAmountInputValue; 
     }
+    console.log("Final Amount to be saved:", finalAmount);
+
 
     const txData = {
         user_id: userId,
@@ -1715,10 +1710,12 @@ async function handleTransactionSubmit(e) {
         date: transactionDate,
         line_items: (isProductInvolved && lineItems.length > 0) ? lineItems : undefined,
     };
+    console.log("Transaction Data to send to backend:", JSON.stringify(txData, null, 2));
     
     try {
         const method = editingTxnId ? "PUT" : "POST";
         const endpoint = method === "PUT" ? `${API}/transactions/${editingTxnId}` : `${API}/transactions`;
+        console.log(`Sending ${method} request to ${endpoint}`);
 
         const res = await apiFetch(endpoint, {
             method,
@@ -1726,7 +1723,9 @@ async function handleTransactionSubmit(e) {
             body: JSON.stringify(txData),
         });
         if(!res) return;
+        console.log("Backend Response Status:", res.status);
         const result = await res.json();
+        console.log("Backend Response Body:", result);
 
         if (!res.ok) {
             throw new Error(result.error || `Operation failed: ${res.statusText} - ${result.details || ""}`);
@@ -1754,10 +1753,12 @@ async function handleTransactionSubmit(e) {
         if (document.getElementById("businessFinanceSection")?.style.display === 'block') loadBusinessExternalFinanceAgreements();
         if (document.getElementById("inventoryManagementSection")?.style.display === 'block') displayProducts(); 
         updateDashboardCards();
+        console.log("--- handleTransactionSubmit: SUCCESS ---");
 
     } catch (error) {
         console.error("Error submitting transaction form:", error);
         alert("Operation failed: " + error.message);
+        console.error("--- handleTransactionSubmit: END - CATCH ERROR ---");
     }
 }
 
@@ -2183,7 +2184,9 @@ async function deleteLender(id) {
         alert("Error: " + error.message);
     }
 }
+// In script.js
 
+// Replace the existing loadCustomerSummaries function with this corrected version
 async function loadCustomerSummaries() {
     const customerTableBody = document.getElementById("customerTableBody");
     if (!customerTableBody) {
@@ -2210,11 +2213,16 @@ async function loadCustomerSummaries() {
         let serialNumber = 1; // For user-friendly row numbering
 
         customersOnly.forEach((user) => {
+            // *** OPTIMIZATION: Directly use the API's pre-calculated remaining_balance ***
+            // This avoids a costly loop inside a loop and is much more efficient.
+            // A positive balance means the business is owed money (receivable).
             const receivable = parseFloat(user.remaining_balance || 0);
 
+            // For secondary summary columns, we still calculate on the client for this view.
             let loanOutstanding = 0;
             let chitNetPosition = 0;
 
+            // Filter transactions once for the current user
             const userTransactions = allTransactionsCache.filter((tx) => tx.user_id === user.id);
 
             userTransactions.forEach((tx) => {
@@ -2233,6 +2241,7 @@ async function loadCustomerSummaries() {
                 }
             });
 
+            // Create and populate the table row
             const row = customerTableBody.insertRow();
             
             row.insertCell().textContent = serialNumber++;
@@ -2241,14 +2250,18 @@ async function loadCustomerSummaries() {
             
             const receivableCell = row.insertCell();
             receivableCell.textContent = receivable.toFixed(2);
+            // In business terms, a positive receivable (customer owes us) is a "good" thing,
+            // but for balance sheets, it might be colored differently. Here we color it red if customer owes us.
             receivableCell.className = receivable > 0 ? "negative-balance num" : receivable < 0 ? "positive-balance num" : "num";
             
             const loanCell = row.insertCell();
             loanCell.textContent = loanOutstanding.toFixed(2);
+            // If we've given a loan, the outstanding amount is an asset. Here, we color it red if positive.
             loanCell.className = loanOutstanding > 0 ? "negative-balance num" : "num";
             
             const chitCell = row.insertCell();
             chitCell.textContent = chitNetPosition.toFixed(2);
+            // If positive, business owes the customer. If negative, customer owes the business.
             chitCell.className = chitNetPosition >= 0 ? "negative-balance num" : "positive-balance num";
             
             row.insertCell().textContent = new Date(user.created_at).toLocaleDateString();
@@ -2274,6 +2287,8 @@ async function loadCustomerSummaries() {
         }
     }
 }
+// in script.js, find and replace the loadSupplierSummaries function
+
 async function loadSupplierSummaries() {
     const supplierTableBody = document.getElementById("supplierTableBody");
     if(!supplierTableBody) return;
@@ -2289,10 +2304,13 @@ async function loadSupplierSummaries() {
             return;
         }
 
-        let serialNumber = 1;
-        suppliers.forEach((supplier) => {
+        // --- THIS IS THE CHANGE ---
+        suppliers.forEach((supplier, index) => { // Added 'index' for the serial number
             const row = supplierTableBody.insertRow();
-            row.insertCell().textContent = serialNumber++;
+            
+            // Use the index + 1 for the Serial Number
+            row.insertCell().textContent = index + 1; 
+            
             row.insertCell().textContent = supplier.lender_name;
             row.insertCell().textContent = supplier.contact_person || "-";
             
@@ -2301,14 +2319,22 @@ async function loadSupplierSummaries() {
             payableCell.textContent = currentPayable.toFixed(2);
             payableCell.className =
                 currentPayable > 0 
-                    ? "negative-balance num" 
+                    ? "negative-balance" 
                     : currentPayable < 0 
-                      ? "positive-balance num"
-                      : "num";
+                      ? "positive-balance"
+                      : "";
 
             row.insertCell().textContent = supplier.notes || "-";
-            row.insertCell().innerHTML = `<button class="btn btn-sm btn-info" onclick="viewBusinessExternalTransactions('${supplier.lender_name.replace(/'/g, "\\'")}', 'Supplier', ${supplier.id})"><i class="fas fa-list-alt"></i></button> <button class='btn btn-primary btn-sm' onclick='openLenderModal(${JSON.stringify(supplier)}, "Supplier")'><i class="fas fa-edit"></i></button>`;
+            
+            // Add the new "Actions" cell with all buttons
+            const actionsCell = row.insertCell();
+            actionsCell.innerHTML = `
+                <button class="btn btn-sm btn-info" onclick="viewBusinessExternalTransactions('${supplier.lender_name.replace(/'/g, "\\'")}', 'Supplier', ${supplier.id})"><i class="fas fa-list-alt"></i></button> 
+                <button class='btn btn-primary btn-sm' onclick='openLenderModal(${JSON.stringify(supplier)}, "Supplier")'><i class="fas fa-edit"></i></button>
+                <button class='btn btn-danger btn-sm' onclick='deleteLender(${supplier.id})'><i class="fas fa-trash"></i></button> <!-- Added Delete Button -->
+            `;
         });
+        // --- END OF CHANGE ---
 
         if (supplierTableBody.rows.length === 0 && suppliers.length > 0) {
             supplierTableBody.innerHTML =
@@ -2351,7 +2377,7 @@ async function populateAgreementEntityDropdown() {
                 '<option value="">Error loading entities</option>';
     }
 }
-function openCreateBusinessChitLoanAgreementModal(agreementId = null) {
+function openCreateBusinessChitLoanAgreementModal(agreementId = null) { // Changed to accept ID or null
     const modal = document.getElementById("businessChitLoanAgreementModal");
     const form = document.getElementById("businessChitLoanAgreementForm");
     const title = document.getElementById(
@@ -2362,6 +2388,7 @@ function openCreateBusinessChitLoanAgreementModal(agreementId = null) {
     document.getElementById("agreementId").value = "";
     document.getElementById("agreement_interest_rate").value = "";
 
+    // --- FIX: Find agreement from cache using ID ---
     const agreement = agreementId ? businessAgreementsCache.find(a => a.agreement_id === agreementId) : null;
     
     populateAgreementEntityDropdown().then(() => {
@@ -2381,7 +2408,7 @@ function openCreateBusinessChitLoanAgreementModal(agreementId = null) {
             document.getElementById("agreement_details").value =
                 agreement.details || "";
         } else {
-            editingAgreementId = null; 
+            editingAgreementId = null; // Ensure it's null for new agreements
             title.textContent = "New Business Finance Agreement";
             document.getElementById("agreement_start_date").value = new Date()
                 .toISOString()
@@ -2400,80 +2427,64 @@ function closeBusinessChitLoanAgreementModal() {
     const form = document.getElementById("businessChitLoanAgreementForm");
     if(form){form.reset();}
 }
-function openLoanFundsReceiptModal(agreementData) {
-    const modal = document.getElementById("loanFundsReceiptModal");
-    if (!modal || !agreementData) return;
-    
-    document.getElementById('receipt_agreement_id').value = agreementData.agreement_id;
-    document.getElementById('receipt_lender_id').value = agreementData.lender_id;
-    document.getElementById('receipt_amount').value = agreementData.total_amount;
-    document.getElementById('receipt_date').value = agreementData.start_date;
-    document.getElementById('receipt_agreement_type').value = agreementData.agreement_type;
 
-    modal.style.display = "block";
-}
-function closeLoanFundsReceiptModal() {
-    const modal = document.getElementById("loanFundsReceiptModal");
-    if (modal) modal.style.display = "none";
-}
-
-async function handleLoanFundsReceiptSubmit(e) {
+async function handleBusinessChitLoanAgreementSubmit(e) {
     e.preventDefault();
-    
-    const agreementId = document.getElementById('receipt_agreement_id').value;
-    const lenderId = document.getElementById('receipt_lender_id').value;
-    const amount = parseFloat(document.getElementById('receipt_amount').value);
-    const date = document.getElementById('receipt_date').value;
-    const agreementType = document.getElementById('receipt_agreement_type').value;
-    const receiptMethod = document.querySelector('input[name="receipt_method"]:checked').value; // "Cash" or "Bank"
-
-    let category = '';
-    let description = '';
-    
-    if (agreementType === 'loan_taken_by_biz') {
-        category = `Loan Received by Business (to ${receiptMethod})`;
-        description = `Initial amount for loan agreement #${agreementId}`;
-    } else if (agreementType === 'loan_given_by_biz') {
-        category = `Loan Disbursed to Customer (from ${receiptMethod})`;
-        description = `Initial disbursement for loan agreement #${agreementId}`;
-    } else {
-        alert("This workflow is only for loan agreements.");
+    const data = {
+        lender_id: document.getElementById("agreement_entity_id").value,
+        agreement_type: document.getElementById("agreement_type").value,
+        total_amount: parseFloat(
+            document.getElementById("agreement_total_amount").value,
+        ),
+        interest_rate: parseFloat(document.getElementById("agreement_interest_rate").value) || 0, 
+        start_date: document.getElementById("agreement_start_date").value,
+        details: document.getElementById("agreement_details").value.trim(),
+    };
+    if (
+        !data.lender_id ||
+        !data.agreement_type ||
+        isNaN(data.total_amount) ||
+        !data.start_date
+    ) {
+        alert(
+            "Please fill all required fields: Entity, Type, Total Amount, and Start Date.",
+        );
         return;
     }
-
-    const transactionData = {
-        lender_id: lenderId,
-        agreement_id: agreementId,
-        amount: amount, 
-        description: description,
-        category: category,
-        date: date.split('T')[0]
-    };
-    
+     if (isNaN(data.interest_rate) || data.interest_rate < 0) { 
+        alert("Interest Rate must be a valid non-negative number.");
+        return;
+    }
+    const method = editingAgreementId ? "PUT" : "POST";
+    const endpoint = editingAgreementId
+        ? `${API}/business-agreements/${editingAgreementId}`
+        : `${API}/business-agreements`;
     try {
-        const res = await apiFetch(`${API}/transactions`, {
-            method: 'POST',
-            body: JSON.stringify(transactionData)
+        const res = await apiFetch(endpoint, {
+            method,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data),
         });
-        if (!res || !res.ok) {
-            const result = await res.json();
-            throw new Error(result.error || "Failed to create the financial transaction.");
-        }
-        alert("Agreement and initial financial transaction created successfully!");
-        closeLoanFundsReceiptModal();
-        
-        await loadAllTransactions();
-        await loadBusinessExternalFinanceAgreements();
-        const cashLedgerActive = document.getElementById("cashLedgerContent")?.style.display !== 'none';
-        const bankLedgerActive = document.getElementById("bankLedgerContent")?.style.display !== 'none';
-        if (cashLedgerActive) loadCashLedger();
-        if (bankLedgerActive) loadBankLedger();
-
+        if(!res) return;
+        const result = await res.json();
+        if (!res.ok)
+            throw new Error(
+                result.error || `Operation failed: ${res.statusText}`,
+            );
+        alert(
+            result.message ||
+                (editingAgreementId
+                    ? "Agreement updated"
+                    : "Agreement created"),
+        );
+        closeBusinessChitLoanAgreementModal();
+        loadBusinessExternalFinanceAgreements(); 
     } catch (error) {
-        console.error("Error creating loan receipt transaction:", error);
+        console.error("Error saving business agreement:", error);
         alert("Error: " + error.message);
     }
 }
+
 async function loadBusinessExternalFinanceAgreements() {
     if (isLoadingBusinessAgreements) return businessAgreementsCache;
     isLoadingBusinessAgreements = true;
@@ -2818,6 +2829,8 @@ async function loadProducts() {
     }
 }
 
+// in script.js
+
 function displayProducts() {
     const tableBody = document.getElementById("productTableBody");
     if(!tableBody) return;
@@ -2827,24 +2840,19 @@ function displayProducts() {
             '<tr><td colspan="9" style="text-align:center;">No products found. Add one.</td></tr>';
         return;
     }
-<<<<<<< HEAD:public/script.js
-    let serialNumber = 1;
-    productsCache.forEach((product) => {
-        const row = tableBody.insertRow();
-        row.insertCell().textContent = serialNumber++;
-=======
 
-    // --- THIS IS THE CHANGE ---
-    const totalProducts = productsCache.length; // Get the total count first
-
+    // Use the second argument 'index' from forEach, which is the 0-based position in the array.
     productsCache.forEach((product, index) => {
         const row = tableBody.insertRow();
         
-        // Calculate the descending serial number
-        row.insertCell().textContent = totalProducts - index; 
-        
-        // The rest of the function remains the same
->>>>>>> 53626221a64f67067318a3be819e4780e39f8d09:frontend/assets/js/script.js
+        // --- THIS IS THE CHANGE ---
+        // OLD WAY:
+        // row.insertCell().textContent = product.id; 
+
+        // NEW WAY: Display the loop index + 1 as the Serial Number (S.No.)
+        row.insertCell().textContent = index + 1; 
+        // --- END OF CHANGE ---
+
         row.insertCell().textContent = product.product_name;
         row.insertCell().textContent = product.sku || "-";
         row.insertCell().textContent = product.preferred_supplier_name || "-";
@@ -2868,7 +2876,6 @@ function displayProducts() {
             <button class='btn btn-danger btn-sm' onclick='deleteProduct(${product.id})'><i class="fas fa-trash"></i></button>
         `;
     });
-    // --- END OF CHANGE ---
 }
 
 async function openProductModal(productIdOrNull = null) {
@@ -3768,6 +3775,7 @@ function closeInvoiceModal() {
     toggleConsigneeFields();
 }
 
+// In script.js, find and replace this function
 
 async function populateUserDropdownForInv() {
     try {
@@ -3780,11 +3788,13 @@ async function populateUserDropdownForInv() {
         const dropdown = document.getElementById("inv_customer_id");
         if (!dropdown) return;
 
+        // --- THIS IS THE KEY CHANGE ---
         const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
 
         const currentValue = dropdown.value;
         dropdown.innerHTML = '<option value="">Select Customer...</option>';
         
+        // Use the filtered array 'customersOnly'
         if (Array.isArray(customersOnly)) {
             customersOnly.forEach((user) => {
                 const option = document.createElement("option");
@@ -4188,6 +4198,7 @@ async function printCurrentInvoice() {
         alert("Please save the invoice first or ensure an invoice is loaded in the modal to print.");
     }
 }
+// script.js (continued)
 
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
     try {
@@ -4499,7 +4510,6 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         alert("Could not prepare invoice for printing: " + error.message);
     }
 }
-// --- END OF generateAndShowPrintableInvoice ---
 
 function convertAmountToWords(amount) {
     const number = Math.round(amount * 100) / 100; 
@@ -4541,6 +4551,7 @@ function convertAmountToWords(amount) {
     }
     return words.trim();
 }
+
 async function performGlobalSearch() {
     const query = document
         .getElementById("globalSearchInput")
@@ -4768,6 +4779,97 @@ async function generateAndDisplayReport(reportType, view = 'monthly') {
     
     displayArea.innerHTML = reportHtml;
 }
+
+function generateTurnoverReport(period, view = 'monthly') {
+    const [year, month] = period.split('-').map(Number);
+    let title, data, tableHeaderLabel;
+
+    const relevantInvoices = invoicesCache.filter(inv => 
+        inv.status !== 'Void' && 
+        inv.status !== 'Draft'
+    );
+    
+    let invoicesForPeriod;
+
+    switch (view) {
+        case 'daily':
+            title = `Daily Turnover Report - ${period}`;
+            tableHeaderLabel = 'Date';
+            invoicesForPeriod = relevantInvoices.filter(inv => inv.invoice_date.startsWith(period));
+            data = {};
+            invoicesForPeriod.forEach(inv => {
+                const date = inv.invoice_date.split('T')[0];
+                data[date] = (data[date] || 0) + parseFloat(inv.amount_before_tax || 0);
+            });
+            break;
+        case 'monthly':
+            title = `Monthly Turnover Report - ${year}`;
+            tableHeaderLabel = 'Month';
+            invoicesForPeriod = relevantInvoices.filter(inv => inv.invoice_date.startsWith(String(year)));
+            data = {};
+            for(let i=1; i<=12; i++){
+                const monthKey = `${year}-${String(i).padStart(2, '0')}`;
+                data[monthKey] = 0;
+            }
+            invoicesForPeriod.forEach(inv => {
+                const monthKey = inv.invoice_date.substring(0, 7);
+                if (data.hasOwnProperty(monthKey)) {
+                   data[monthKey] += parseFloat(inv.amount_before_tax || 0);
+                }
+            });
+            break;
+        case 'yearly':
+            title = 'Yearly Turnover Report';
+            tableHeaderLabel = 'Year';
+            invoicesForPeriod = relevantInvoices;
+            data = {};
+            invoicesForPeriod.forEach(inv => {
+                const yearKey = inv.invoice_date.substring(0, 4);
+                data[yearKey] = (data[yearKey] || 0) + parseFloat(inv.amount_before_tax || 0);
+            });
+            break;
+    }
+
+    const sortedData = Object.entries(data).sort((a, b) => new Date(a[0]) - new Date(b[0]));
+    
+    const totalTurnover = invoicesForPeriod.reduce((sum, inv) => sum + parseFloat(inv.amount_before_tax || 0), 0);
+    const totalInvoices = invoicesForPeriod.length;
+    
+    let tableRows = sortedData.map(([label, amount]) => {
+        let displayLabel = label;
+        if(view === 'monthly') {
+            displayLabel = new Date(label + '-02').toLocaleString('default', { month: 'long', year: 'numeric' });
+        } else if (view === 'daily') {
+            displayLabel = new Date(label).toLocaleDateString('en-GB');
+        }
+        return `<tr>
+                    <td>${displayLabel}</td>
+                    <td class="num positive">₹${amount.toFixed(2)}</td>
+                </tr>`;
+    }).join('');
+    
+    if (sortedData.length === 0 || totalTurnover === 0) {
+        tableRows = `<tr><td colspan="2" style="text-align:center;">No turnover data for this view.</td></tr>`;
+    }
+
+    return `
+        <h3 class="report-title">${title}</h3>
+        <div class="report-view-switcher">
+            <button class="btn btn-secondary btn-sm ${view === 'daily' ? 'active' : ''}" onclick="generateAndDisplayReport('turnover_report', 'daily')">Daily</button>
+            <button class="btn btn-secondary btn-sm ${view === 'monthly' ? 'active' : ''}" onclick="generateAndDisplayReport('turnover_report', 'monthly')">Monthly</button>
+            <button class="btn btn-secondary btn-sm ${view === 'yearly' ? 'active' : ''}" onclick="generateAndDisplayReport('turnover_report', 'yearly')">Yearly</button>
+        </div>
+        <div class="pnl-summary-grid">
+             <div class="pnl-card"><h5>Total Turnover (Before Tax)</h5><p class="positive">₹${totalTurnover.toFixed(2)}</p></div>
+             <div class="pnl-card"><h5>Number of Invoices</h5><p>${totalInvoices}</p></div>
+        </div>
+        <table>
+            <thead><tr><th>${tableHeaderLabel}</th><th class="num">Turnover (₹)</th></tr></thead>
+            <tbody>${tableRows}</tbody>
+        </table>
+    `;
+}
+
 function generatePnlReport(transactions, period) {
     let totalRevenue = 0;
     let totalCogs = 0;
@@ -5106,9 +5208,11 @@ function createRevenueChart() {
     const granularity = document.querySelector('.chart-controls .chart-time-btn.active').dataset.period;
     const ranges = getPeriodDateRanges(period);
 
+    // --- FIX: Determine the correct end date for the loop ---
     const today = new Date();
-    today.setHours(23, 59, 59, 999); 
+    today.setHours(23, 59, 59, 999); // Set to end of today
     const loopEndDate = today < ranges.currentEnd ? today : ranges.currentEnd;
+    // --- END FIX ---
 
     const labels = [];
     const dataPoints = [];
@@ -5121,6 +5225,7 @@ function createRevenueChart() {
 
     if (granularity === 'daily') {
         let currentDate = new Date(ranges.currentStart);
+        // --- FIX: Use loopEndDate instead of ranges.currentEnd ---
         while (currentDate <= loopEndDate) {
             aggregatedData.set(currentDate.toISOString().split('T')[0], 0);
             currentDate.setDate(currentDate.getDate() + 1);
@@ -5128,7 +5233,7 @@ function createRevenueChart() {
         relevantInvoices.forEach(inv => {
             const dateStr = inv.invoice_date.split('T')[0];
             const revenue = parseFloat(inv.amount_before_tax || 0);
-            if (aggregatedData.has(dateStr)) {
+            if (aggregatedData.has(dateStr)) { // Only add if it's within our loop range
                 aggregatedData.set(dateStr, (aggregatedData.get(dateStr) || 0) + revenue);
             }
         });
@@ -5203,6 +5308,7 @@ function createCategoryChart() {
     if (categoryChartInstance) categoryChartInstance.destroy();
     const ctx = canvas.getContext("2d");
     
+    // --- FIX: Logic now correctly calculates top products from invoices ---
     const period = document.getElementById('dashboardPeriod')?.value || 'this_month';
     const ranges = getPeriodDateRanges(period);
     const productSales = {};
@@ -5226,6 +5332,7 @@ function createCategoryChart() {
     const sortedProducts = Object.entries(productSales)
         .sort(([, a], [, b]) => b - a)
         .slice(0, 5); 
+    // --- END FIX ---
 
     if (sortedProducts.length === 0) {
         placeholder.style.display = 'block';
@@ -5240,7 +5347,7 @@ function createCategoryChart() {
     categoryChartInstance = new Chart(ctx, {
         type: "doughnut",
         data: {
-            labels: sortedProducts.map(([productName]) => productName),
+            labels: sortedProducts.map(([productName]) => productName), // Use product name for labels
             datasets: [{
                 data: sortedProducts.map(([, amount]) => amount),
                 backgroundColor: chartColors,
@@ -5307,12 +5414,13 @@ async function loadRecentActivity() {
                 }
             }
             
+            // --- FIX: Removed color classes from icon string ---
             return {
                 type: "transaction",
                 title: `${tx.category || "Transaction"}`,
                 subtitle: `₹${Math.abs(displayedAmount).toFixed(2)} ${displayedAmount >= 0 ? '(Inflow)' : '(Outflow)'}`,
                 time: formatTimeAgo(tx.date || tx.transaction_date || tx.created_at),
-                icon: displayedAmount >= 0 ? 'fa-arrow-up' : 'fa-arrow-down',
+                icon: displayedAmount >= 0 ? 'fa-arrow-up' : 'fa-arrow-down', // <-- Corrected
                 bgColor: displayedAmount >= 0 ? 'var(--success-color)' : 'var(--danger-color)'
             };
         });
@@ -5413,6 +5521,37 @@ function showLowStockProducts() {
     const alertMessage = `Low Stock Alert!\n\nThe following products need restocking:\n\n${lowStockProducts.map(p => `• ${p.product_name}: ${p.current_stock || 0} units remaining (Threshold: ${p.low_stock_threshold})`).join("\n")}`;
     alert(alertMessage);
     navigateToSection('inventoryManagementSection');
+}
+function generateQuickReport() {
+    const totalRevenue = allTransactionsCache.filter(tx => parseFloat(tx.amount || 0) > 0).reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
+    const totalExpenses = allTransactionsCache.filter(tx => parseFloat(tx.amount || 0) < 0).reduce((sum, tx) => sum + Math.abs(parseFloat(tx.amount || 0)), 0);
+    const pendingInvoicesCount = invoicesCache.filter(inv => inv.status !== "Paid" && inv.status !== "Void").length;
+    const overdueInvoicesCount = invoicesCache.filter(inv => {
+        if (inv.status === "Paid" || inv.status === "Void") return false;
+        const dueDate = new Date(inv.due_date);
+        return dueDate < new Date();
+    }).length;
+
+    const report = `
+Quick Business Report
+=====================
+Revenue (All Time): ₹${totalRevenue.toFixed(2)}
+Expenses (All Time): ₹${totalExpenses.toFixed(2)}
+Net (All Time): ₹${(totalRevenue - totalExpenses).toFixed(2)}
+
+Customers: ${usersDataCache.length}
+Suppliers: ${externalEntitiesCache.filter(e => e.entity_type === 'Supplier').length}
+Products: ${productsCache.length}
+
+Invoices:
+- Total: ${invoicesCache.length}
+- Pending: ${pendingInvoicesCount}
+- Overdue: ${overdueInvoicesCount}
+
+Generated on: ${new Date().toLocaleString()}
+`;
+    alert(report);
+     navigateToSection('reportsSection');
 }
 
 function refreshRecentActivity() {
@@ -5627,6 +5766,7 @@ function openLoanDetailsModal(agreementId) {
         return;
     }
 
+    // Populate Modal Title and Header
     document.getElementById('loanDetailsTitle').textContent = `Details for Loan with ${agreement.lender_name}`;
     document.getElementById('loanDetailsHeaderInfo').innerHTML = `
         <strong>Type:</strong> ${agreement.agreement_type.replace(/_/g, ' ')} | 
@@ -5634,6 +5774,7 @@ function openLoanDetailsModal(agreementId) {
         <strong>Interest Rate:</strong> ${agreement.interest_rate}% p.m.
     `;
 
+    // Populate Monthly Interest Breakdown Table
     const interestTableBody = document.getElementById('loanInterestBreakdownTableBody');
     interestTableBody.innerHTML = '';
     if (agreement.monthly_breakdown && agreement.monthly_breakdown.length > 0) {
@@ -5650,6 +5791,7 @@ function openLoanDetailsModal(agreementId) {
         interestTableBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No monthly interest data available.</td></tr>';
     }
 
+    // Populate Payment History Table
     const paymentHistoryTableBody = document.getElementById('loanPaymentHistoryTableBody');
     paymentHistoryTableBody.innerHTML = '';
     const relatedTransactions = allTransactionsCache
@@ -5678,12 +5820,15 @@ function closeLoanDetailsModal() {
     if (modal) modal.style.display = "none";
 }
 async function generateValuationReport(period) {
+    // Note: Valuation is a snapshot in time. The 'period' is ignored for this specific report.
+    // Ensure all data is loaded
     if (usersDataCache.length === 0) await loadUsers();
     if (productsCache.length === 0) await loadProducts();
     if (allTransactionsCache.length === 0) await loadAllTransactions();
     if (externalEntitiesCache.length === 0) await loadLenders(null, true);
     if (businessAgreementsCache.length === 0) await loadBusinessExternalFinanceAgreements();
 
+    // --- ASSET CALCULATION ---
     let totalCash = 0;
     let totalBank = 0;
     allTransactionsCache.forEach(t => {
@@ -5724,6 +5869,7 @@ async function generateValuationReport(period) {
     
     const totalAssets = totalCash + totalBank + accountsReceivable + inventoryValue + loansGiven;
 
+    // --- LIABILITY CALCULATION ---
     const suppliers = externalEntitiesCache.filter(e => e.entity_type === 'Supplier');
     const accountsPayable = suppliers.reduce((sum, s) => {
          const supplierTransactionsTotal = allTransactionsCache
@@ -5775,6 +5921,7 @@ async function generateValuationReport(period) {
     `;
 }
 
+// This is the corrected function
 function generatePaymentsBreakdownReport(monthlyTransactions, period) {
     let supplierPayments = 0;
     let loanPrincipalRepayments = 0;
@@ -5815,149 +5962,4 @@ function generatePaymentsBreakdownReport(monthlyTransactions, period) {
         </table>
     `;
 }
-async function handleBusinessChitLoanAgreementSubmit(e) {
-    e.preventDefault();
-    const data = {
-        lender_id: document.getElementById("agreement_entity_id").value,
-        agreement_type: document.getElementById("agreement_type").value,
-        total_amount: parseFloat(document.getElementById("agreement_total_amount").value),
-        interest_rate: parseFloat(document.getElementById("agreement_interest_rate").value) || 0,
-        start_date: document.getElementById("agreement_start_date").value,
-        details: document.getElementById("agreement_details").value.trim(),
-    };
 
-    if (!data.lender_id || !data.agreement_type || isNaN(data.total_amount) || !data.start_date) {
-        alert("Please fill all required fields: Entity, Type, Total Amount, and Start Date.");
-        return;
-    }
-    if (isNaN(data.interest_rate) || data.interest_rate < 0) {
-        alert("Interest Rate must be a valid non-negative number.");
-        return;
-    }
-
-    const method = editingAgreementId ? "PUT" : "POST";
-    const endpoint = editingAgreementId ?
-        `${API}/business-agreements/${editingAgreementId}` :
-        `${API}/business-agreements`;
-
-    try {
-        const res = await apiFetch(endpoint, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(data),
-        });
-        if (!res) return;
-        const result = await res.json();
-        if (!res.ok) {
-            throw new Error(result.error || `Operation failed: ${res.statusText}`);
-        }
-
-        closeBusinessChitLoanAgreementModal();
-        
-        if (method === "POST" && result.agreement && (result.agreement.agreement_type === 'loan_taken_by_biz' || result.agreement.agreement_type === 'loan_given_by_biz')) {
-            openLoanFundsReceiptModal(result.agreement);
-        } else {
-            alert(result.message || (editingAgreementId ? "Agreement updated" : "Agreement created"));
-            loadBusinessExternalFinanceAgreements();
-        }
-
-    } catch (error) {
-        console.error("Error saving business agreement:", error);
-        alert("Error: " + error.message);
-    }
-}
-async function handleCompanyExpenseSubmit(e) {
-    e.preventDefault();
-    const form = document.getElementById("companyExpenseForm");
-    const categoryName = form.expenseCategory.value;
-    const paymentMethod = form.querySelector('input[name="expensePayMode"]:checked').value;
-    
-    const fullCategoryName = `${categoryName} (${paymentMethod})`;
-
-    const data = {
-        user_id: null,
-        lender_id: null,
-        amount: -Math.abs(parseFloat(form.expenseAmount.value)), // Expenses are always negative
-        description: form.expenseDescription.value,
-        category: fullCategoryName,
-        date: form.expenseDate.value,
-    };
-    
-    if (!data.category || isNaN(data.amount) || !data.date || !data.description) {
-        alert("Please fill all required fields for the expense.");
-        return;
-    }
-
-    try {
-        const res = await apiFetch(`${API}/transactions`, {
-            method: 'POST',
-            body: JSON.stringify(data),
-        });
-        if(!res) return;
-        const result = await res.json();
-        if (!res.ok) throw new Error(result.error || `Failed: ${res.statusText}`);
-        
-        alert(result.message || "Company expense added successfully.");
-        closeCompanyExpenseModal();
-        await loadAllTransactions();
-        loadAndDisplayCompanyExpenses();
-        
-        const cashLedgerActive = document.getElementById("cashLedgerContent")?.style.display !== 'none';
-        const bankLedgerActive = document.getElementById("bankLedgerContent")?.style.display !== 'none';
-        if (cashLedgerActive) loadCashLedger();
-        if (bankLedgerActive) loadBankLedger();
-    } catch (error) {
-        console.error("Error submitting company expense:", error);
-        alert("Error: " + error.message);
-    }
-}
-function openCompanyExpenseModal(preselectCategory = null) {
-    const modal = document.getElementById("companyExpenseModal");
-    if (!modal) return;
-    const form = document.getElementById("companyExpenseForm");
-    form.reset();
-
-    if (preselectCategory) {
-        document.getElementById("expenseCategory").value = preselectCategory;
-    }
-    document.getElementById("expenseDate").value = new Date().toISOString().split("T")[0];
-    modal.style.display = "block";
-}
-function closeCompanyExpenseModal() {
-    const modal = document.getElementById("companyExpenseModal");
-    if(modal) modal.style.display = "none";
-}
-
-function loadAndDisplayCompanyExpenses() {
-    const tableBody = document.getElementById("companyExpensesTableBody");
-    if (!tableBody) return;
-
-    const companyExpenses = allTransactionsCache.filter(tx => {
-        const catInfo = transactionCategories.find(c => c.name === tx.category);
-        return catInfo && catInfo.group === 'biz_ops';
-    });
-
-    companyExpenses.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-    tableBody.innerHTML = "";
-    if (companyExpenses.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No company expenses recorded yet.</td></tr>';
-        return;
-    }
-
-    companyExpenses.forEach(tx => {
-        const row = tableBody.insertRow();
-        const amount = parseFloat(tx.amount || 0);
-
-        row.innerHTML = `
-            <td>${new Date(tx.date).toLocaleDateString()}</td>
-            <td>${tx.category || "-"}</td>
-            <td>${tx.description || "-"}</td>
-            <td class="num negative">₹${Math.abs(amount).toFixed(2)}</td>
-            <td>
-                <button class='btn btn-info btn-sm' onclick='openTransactionModal(${JSON.stringify(tx)})'><i class="fas fa-edit"></i></button>
-                <button class='btn btn-danger btn-sm' onclick='deleteTransaction(${tx.id})'><i class="fas fa-trash"></i></button>
-            </td>
-        `;
-    });
-}
