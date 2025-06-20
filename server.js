@@ -1,4 +1,6 @@
-// START OF FILE server.js (Final Corrected Version)
+// --- START OF FILE server.js ---
+
+// --- START OF COMPLETE server.js FILE (DEFINITIVE FIX) ---
 
 const express = require('express');
 const cors = require('cors');
@@ -30,16 +32,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(authMiddleware); // This middleware attempts to decode the user from a token on every request
+app.use(authMiddleware); // This middleware TRIES to decode a user from a token on every request
 
 // --- 2. API Routes ---
-// We create a dedicated router for our API to keep it separate.
 const apiRouter = express.Router();
 
-// Public API routes (like login and signup) that DON'T require a token
+// Public API routes
 apiRouter.use('/auth', authRoutes);
 
-// Protected API routes that DO require a valid token (enforced by `checkAuth`)
+// Protected API routes
 apiRouter.use('/users', checkAuth, auditLogMiddleware, userRoutes);
 apiRouter.use('/transactions', checkAuth, auditLogMiddleware, transactionRoutes);
 apiRouter.use('/external-entities', checkAuth, auditLogMiddleware, lenderRoutes);
@@ -51,47 +52,43 @@ apiRouter.use('/ledger', checkAuth, ledgerRoutes);
 apiRouter.use('/reports', checkAuth, reportRoutes);
 apiRouter.use('/auditlog', checkAuth, checkRole(['admin']), auditLogRoutesFromFile);
 
-// We tell our main app to use this router for any path starting with `/api`
+// Use the API router for all /api paths
 app.use('/api', apiRouter);
 
 
 // --- 3. Frontend Routes ---
-// This section now comes AFTER the API section.
 
-// First, serve static files like CSS and JS. The path `/css/login.css` will be
-// correctly found in `frontend/assets/css/login.css`.
-app.use(express.static(path.join(__dirname, 'frontend/assets')));
+// FIX: Serve all static frontend files from a dedicated 'public' directory.
+// This is the standard and robust practice.
+// All HTML, CSS, and client-side JS files should be moved into this 'public' folder.
+const publicPath = path.join(__dirname, 'public');
+app.use(express.static(publicPath));
 
-// Next, handle explicit requests for our main pages.
-app.get('/login', (req, res) => {
-    if (req.user) return res.redirect('/');
-    res.sendFile(path.join(__dirname, 'frontend/assets/login.html'));
-});
-
-app.get('/signup.html', (req, res) => {
-    if (req.user) return res.redirect('/');
-    res.sendFile(path.join(__dirname, 'frontend/assets/signup.html'));
-});
-
-// Finally, the catch-all route for our Single Page Application.
-// This MUST be the last route. It ensures that if a logged-in user refreshes
-// on a page like `/customers`, the main `index.html` is served.
-app.get('*', (req, res) => {
-    if (!req.user) {
-        return res.redirect('/login');
+// The catch-all route for the Single-Page Application.
+// This MUST be the last non-error-handling route.
+// It serves the main application shell, and client-side routing takes over.
+app.get('*', (req, res, next) => {
+    // If the request is for an API endpoint that wasn't found, let it fall through.
+    if (req.path.startsWith('/api/')) {
+        return next();
     }
-    res.sendFile(path.join(__dirname, 'frontend/assets/index.html'));
+    // For any other request, send the main index.html file from the public directory.
+    res.sendFile(path.join(publicPath, 'index.html'), (err) => {
+        if (err) {
+            console.error("Error sending index.html from public directory:", err);
+            res.status(500).send("Server error: Could not serve the application shell.");
+        }
+    });
 });
+
 
 // --- 4. Global Error Handler ---
-// This will catch any errors that occur in our API routes.
 app.use((err, req, res, next) => {
   console.error('🆘 Global Server Error Handler Caught:', err.stack || err.message);
   if (res.headersSent) {
     return next(err);
   }
   const statusCode = err.statusCode || 500;
-  // Always respond with JSON for errors
   res.status(statusCode).json({
     error: err.message || 'Internal Server Error',
     details: process.env.NODE_ENV === 'development' ? err.stack : undefined
@@ -99,8 +96,7 @@ app.use((err, req, res, next) => {
 });
 
 
-// --- Server Start and Backup Scheduler ---
-// (This part is unchanged and correct)
+// --- 5. Server Start and Backup Scheduler ---
 cron.schedule('0 2 * * *', () => {
     console.log('🕒 Running daily backup job...');
     exec('node backup.js', (error, stdout, stderr) => {

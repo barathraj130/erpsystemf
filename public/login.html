@@ -1,4 +1,3 @@
-<!-- START OF FILE login.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7,8 +6,7 @@
     <title>Login - ERP System</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
-    <!-- This path is now correct because login.css is inside the /css/ subfolder -->
-    <link rel="stylesheet" href="/css/login.css">
+    <link rel="stylesheet" href="/login.css">
 </head>
 <body>
     <div class="login-container">
@@ -37,28 +35,41 @@
     </div>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            // If a user is already logged in and somehow lands here, redirect them.
             if (localStorage.getItem('erp-token')) {
-                window.location.href = '/';
+                window.location.href = '/index.html';
+                return;
             }
+
             const loginForm = document.getElementById('loginForm');
             const errorMessage = document.getElementById('errorMessage');
+            
             loginForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 errorMessage.textContent = '';
                 const username = loginForm.username.value;
                 const password = loginForm.password.value;
+
                 try {
                     const res = await fetch('/api/auth/login', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ username, password })
                     });
+
                     const data = await res.json();
+
                     if (!res.ok) {
                         throw new Error(data.error || 'Login failed');
                     }
+
+                    // On successful login, store the token and redirect to the main app.
                     localStorage.setItem('erp-token', data.token);
-                    window.location.href = '/';
+                    
+                    // FIX: Redirect directly to index.html instead of the root path '/'.
+                    // This is more explicit and reliable.
+                    window.location.href = '/index.html';
+                    
                 } catch (error) {
                     errorMessage.textContent = error.message;
                 }

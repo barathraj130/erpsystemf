@@ -2,8 +2,8 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const bcrypt = require('bcryptjs');// <-- Add this
-const saltRounds = 10; // <-- Add this
+const bcrypt = require('bcryptjs');
+const saltRounds = 10;
 
 // Get all users (customers/employees)
 router.get('/', (req, res) => {
@@ -34,6 +34,12 @@ router.post('/', (req, res) => {
     password // New password field from UI
   } = req.body;
 
+  // **** FIX: Get the companyId from the currently authenticated user ****
+  const companyId = req.user.companyId; 
+  if (!companyId) {
+      return res.status(400).json({ error: "Could not identify the company for the current session. Please re-login." });
+  }
+
   if (!username) {
     return res.status(400).json({ error: "Username is required." });
   }
@@ -41,11 +47,12 @@ router.post('/', (req, res) => {
   const createUser = (hashedPassword = null) => {
     db.run(
       `INSERT INTO users (
-          username, password, email, phone, company, initial_balance, role,
+          company_id, username, password, email, phone, company, initial_balance, role,
           address_line1, address_line2, city_pincode, state, gstin, state_code
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+          companyId, // Pass the company ID of the creator
           username, hashedPassword, email, phone, company, parseFloat(initial_balance || 0), role || 'user',
           address_line1, address_line2, city_pincode, state, gstin, state_code
       ],
@@ -54,6 +61,10 @@ router.post('/', (req, res) => {
           if (err.message.includes("UNIQUE constraint failed: users.username")) {
               return res.status(400).json({ error: "Username already exists." });
           }
+           if (err.message.includes("NOT NULL constraint failed: users.company_id")) {
+                console.error("Critical error: company_id was not provided to user creation SQL.");
+                return res.status(500).json({ error: "Server error: Failed to associate user with a company." });
+            }
           console.error("Error creating user:", err.message);
           return res.status(500).json({ error: err.message });
         }

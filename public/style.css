@@ -703,3 +703,16 @@ label { display: block; margin-bottom: 5px; font-size: 0.85em; font-weight: 500;
     color: white;
     border-color: var(--primary-color);
 }
+/* In style.css, can be added near the other .section-header styles */
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.section-actions {
+  display: flex;
+  gap: 10px;
+}

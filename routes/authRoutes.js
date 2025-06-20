@@ -99,6 +99,12 @@ router.post('/login', (req, res) => {
         if (!user) return res.status(401).json({ error: 'Invalid credentials.' });
         if (!user.password) return res.status(401).json({ error: 'This user account is not configured for password login.' });
 
+        // **NEW DEFENSIVE CHECK**
+        if ((user.role === 'admin' || user.role === 'user') && !user.company_id) {
+            console.error(`CRITICAL: User '${username}' has no company_id. Database is not set up correctly.`);
+            return res.status(500).json({ error: 'Server configuration error. User is not linked to a company.' });
+        }
+
         try {
             const isMatch = await bcrypt.compare(password, user.password);
             if (!isMatch) return res.status(401).json({ error: 'Invalid credentials.' });

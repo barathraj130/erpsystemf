@@ -50,12 +50,11 @@ function initializeDb() {
       else console.log("✅ [db.js] Companies table checked/created.");
     });
     
-    // *** FIX: Added the missing 'users' table definition ***
     // This table is for both system users (admin) and customers.
     db.run(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        company_id INTEGER, -- Foreign key to the company this user belongs to
+        company_id INTEGER NOT NULL, -- **** FIX: Made company_id required ****
         username TEXT NOT NULL UNIQUE,
         email TEXT UNIQUE,
         password TEXT, -- Can be NULL for customers not intended to log in
@@ -338,31 +337,43 @@ function initializeDb() {
         }
     });
 
-    // --- Create a default admin user if one doesn't exist ---
-    const saltRounds = 10;
-    const defaultAdminPassword = 'admin';
+    // --- Create a default company AND a default admin user if they don't exist ---
+    db.get("SELECT id FROM companies WHERE id = 1", [], (err, companyRow) => {
+        if (err) return console.error("❌ [db.js] Error checking for default company:", err.message);
 
-    db.get("SELECT id FROM users WHERE username = 'admin'", [], (err, row) => {
-        if (err) {
-            console.error("❌ [db.js] Error checking for admin user:", err.message);
-        } else if (!row) {
-            console.log("ℹ️ [db.js] No admin user found, creating one...");
-            bcrypt.hash(defaultAdminPassword, saltRounds, (hashErr, hashedPassword) => {
-                if (hashErr) {
-                    console.error("❌ [db.js] Error hashing default admin password:", hashErr);
-                } else {
-                    db.run(`INSERT INTO users (username, password, role) VALUES (?, ?, ?)`, 
-                        ['admin', hashedPassword, 'admin'], 
-                        (insertErr) => {
-                            if (insertErr) {
-                                console.error("❌ [db.js] Error creating default admin user:", insertErr.message);
-                            } else {
-                                console.log("✅ [db.js] Default admin user created with username 'admin' and password 'admin'.");
+        const createDefaultAdmin = (companyId) => {
+            const saltRounds = 10;
+            const defaultAdminPassword = 'admin';
+
+            db.get("SELECT id FROM users WHERE username = 'admin'", [], (err, userRow) => {
+                if (err) return console.error("❌ [db.js] Error checking for admin user:", err.message);
+
+                if (!userRow) {
+                    console.log("ℹ️ [db.js] No admin user found, creating one for company ID:", companyId);
+                    bcrypt.hash(defaultAdminPassword, saltRounds, (hashErr, hashedPassword) => {
+                        if (hashErr) return console.error("❌ [db.js] Error hashing default admin password:", hashErr);
+                        
+                        // FIX: Associate the default admin with the default company
+                        db.run(`INSERT INTO users (company_id, username, password, role) VALUES (?, ?, ?, ?)`, 
+                            [companyId, 'admin', hashedPassword, 'admin'], 
+                            (insertErr) => {
+                                if (insertErr) console.error("❌ [db.js] Error creating default admin user:", insertErr.message);
+                                else console.log("✅ [db.js] Default admin user created with username 'admin' and password 'admin'.");
                             }
-                        }
-                    );
+                        );
+                    });
                 }
             });
+        };
+
+        if (!companyRow) {
+            console.log("ℹ️ [db.js] No default company found, creating one...");
+            db.run(`INSERT INTO companies (id, company_name) VALUES (?, ?)`, [1, 'Default System Company'], function(err) {
+                if (err) console.error("❌ [db.js] Error creating default company:", err.message);
+                else createDefaultAdmin(1);
+            });
+        } else {
+            createDefaultAdmin(1);
         }
     });
 

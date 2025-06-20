@@ -152,7 +152,11 @@ router.post('/', (req, res) => {
             return res.status(500).json({ error: "Failed to create business agreement: " + err.message });
         }
         const newAgreementId = this.lastID;
-        db.get(`SELECT ba.*, l.lender_name FROM business_agreements ba JOIN lenders l ON ba.lender_id = l.id WHERE ba.id = ?`, [newAgreementId], (fetchErr, newAgreement) => {
+        // Fetch the newly created agreement to send back to the client
+        db.get(`SELECT ba.id as agreement_id, ba.*, l.lender_name 
+                FROM business_agreements ba 
+                JOIN lenders l ON ba.lender_id = l.id 
+                WHERE ba.id = ?`, [newAgreementId], (fetchErr, newAgreement) => {
             if (fetchErr) {
                  console.error("❌ [API DB Error] Error fetching newly created agreement:", fetchErr.message);
                  return res.status(201).json({ id: newAgreementId, message: 'Business agreement created (but failed to fetch full details).' });
@@ -163,14 +167,7 @@ router.post('/', (req, res) => {
             }
             console.log("✅ [API DB Success] Successfully created and fetched business agreement:", newAgreement);
             res.status(201).json({ 
-                agreement: {
-                    ...newAgreement, 
-                    outstanding_principal: newAgreement.total_amount,
-                    interest_payable: 0, 
-                    calculated_principal_paid: 0,
-                    calculated_interest_paid: 0,
-                    calculated_principal_received_by_biz: 0 
-                }, 
+                agreement: newAgreement, 
                 message: 'Business agreement created successfully.' 
             });
         });
