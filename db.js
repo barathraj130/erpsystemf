@@ -42,6 +42,22 @@ function initializeDb() {
       `CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, user_id_acting INTEGER, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id INTEGER, details_before TEXT, details_after TEXT, ip_address TEXT, FOREIGN KEY (user_id_acting) REFERENCES users(id) ON DELETE SET NULL)`,
       `CREATE TABLE IF NOT EXISTS business_profile (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT NOT NULL, address_line1 TEXT, address_line2 TEXT, city_pincode TEXT, state TEXT, gstin TEXT, state_code TEXT, phone TEXT, email TEXT, bank_name TEXT, bank_account_no TEXT, bank_ifsc_code TEXT, logo_url TEXT)`
     ];
+     // Notifications Table
+    db.run(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER, -- For user-specific notifications, NULL for global
+        message TEXT NOT NULL,
+        type TEXT DEFAULT 'info', -- 'info', 'success', 'warning', 'danger'
+        link TEXT, -- A URL or identifier to navigate to on click
+        is_read BOOLEAN DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `, (err) => {
+        if (err) console.error("❌ [db.js] Error creating/checking notifications table:", err.message);
+        else console.log("✅ [db.js] notifications table checked/created.");
+    });
     
     createTableStatements.forEach(stmt => db.run(stmt, (err) => {
         if (err) console.error("❌ [db.js] Error creating a table:", err.message);

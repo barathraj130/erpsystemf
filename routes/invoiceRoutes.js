@@ -5,6 +5,25 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
+async function generateNotificationForLowStock(productId) {
+    db.get(`SELECT product_name, current_stock, low_stock_threshold 
+            FROM products WHERE id = ?`, [productId], (err, product) => {
+        if (err || !product) return;
+
+        if (product.low_stock_threshold > 0 && product.current_stock <= product.low_stock_threshold) {
+            const message = `Low stock alert for ${product.product_name}. Current stock: ${product.current_stock}.`;
+            // Check if a recent unread low-stock notification for this product already exists
+            db.get(`SELECT id FROM notifications WHERE message = ? AND is_read = 0`, [message], (err, existing) => {
+                if(err || existing) return; // Don't create duplicates
+
+                db.run(`INSERT INTO notifications (message, type, link) VALUES (?, ?, ?)`,
+                    [message, 'warning', `/inventory#product-${productId}`]
+                );
+            });
+        }
+    });
+}
+
 // --- Helper function to create transactions and update stock ---
 async function createAssociatedTransactionsAndStockUpdate(invoiceId, invoiceData, processedLineItems, res, isNewInvoice = true) {
     console.log(`<<<<< DEBUG TXN HELPER INVOKED: invoiceId=${invoiceId}, isNewInvoice=${isNewInvoice} >>>>>`);
@@ -77,6 +96,7 @@ async function createAssociatedTransactionsAndStockUpdate(invoiceId, invoiceData
                                             console.error("<<<<< DB ERROR TXN HELPER: Error updating stock for product ID:", item.product_id, stockErr.message, ">>>>>");
                                             return stockReject(stockErr);
                                         }
+                                        generateNotificationForLowStock(item.product_id); 
                                         if (this.changes === 0 && item.product_id) {
                                             console.warn("<<<<< WARN TXN HELPER: Product ID not found for stock update or stock unchanged:", item.product_id, ">>>>>");
                                         }
@@ -433,6 +453,13 @@ router.post('/', async (req, res) => {
                 };
                 console.log("<<<<< DEBUG: POST /api/invoices - Calling TXN HELPER with: ", JSON.stringify(invoiceFullDataForTxHelper, null, 2), ">>>>>");
                 await createAssociatedTransactionsAndStockUpdate(invoiceId, invoiceFullDataForTxHelper, processed_line_items, res, true);
+                const LARGE_INVOICE_THRESHOLD = 50000; // Define your threshold
+                if (final_total_amount >= LARGE_INVOICE_THRESHOLD) {
+                    const message = `New large invoice (#${invoice_number}) created for ₹${final_total_amount.toFixed(2)}.`;
+                    db.run(`INSERT INTO notifications (message, type, link) VALUES (?, ?, ?)`, 
+                        [message, 'success', `/invoices#invoice-${invoiceId}`]
+                    );
+                }
 
                 db.run("COMMIT;", (commitErr) => {
                     if (commitErr) {

@@ -17,6 +17,7 @@ let productsCache = [];
 let invoicesCache = [];
 let productSuppliersCache = [];
 let businessProfileCache = null;
+let unreadNotificationsCache = [];
 
 let isLoadingUsers = false;
 let isLoadingTransactions = false;
@@ -25,6 +26,7 @@ let isLoadingBusinessAgreements = false;
 let isLoadingProducts = false;
 let isLoadingInvoices = false;
 let isLoadingBusinessProfile = false;
+
 
 // For Chart instances - DECLARE THEM GLOBALLY ONCE
 let revenueChartInstance = null;
@@ -275,6 +277,7 @@ async function loadInitialData() {
         loadProducts(),
         loadInvoices(),
         loadBusinessProfile(),
+        loadNotifications()
     ]);
     await loadBusinessExternalFinanceAgreements();
     populateTransactionCategoryDropdown();
@@ -378,6 +381,26 @@ function setupEventListeners() {
             }
         });
     }
+    const notificationBell = document.getElementById('notificationBell');
+    if (notificationBell) {
+        notificationBell.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const dropdown = document.getElementById('notificationDropdown');
+            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+
+            if (dropdown.style.display === 'block' && unreadNotificationsCache.length > 0) {
+                markNotificationsAsRead();
+            }
+        });
+
+        document.addEventListener('click', (event) => {
+            const dropdown = document.getElementById('notificationDropdown');
+            if (dropdown && !dropdown.contains(event.target) && !notificationBell.contains(event.target)) {
+                dropdown.style.display = 'none';
+            }
+        });
+    }
+
     const globalSearchInputElem = document.getElementById("globalSearchInput");
     if (globalSearchInputElem) {
         globalSearchInputElem.addEventListener("keypress", (e) => {
@@ -526,6 +549,88 @@ function setupEventListeners() {
         });
     }
 } 
+// --- ADD THESE NEW FUNCTIONS TO SCRIPT.JS ---
+
+async function loadNotifications() {
+    try {
+        const res = await apiFetch(`${API}/notifications`);
+        if (!res || !res.ok) throw new Error('Failed to load notifications');
+        
+        unreadNotificationsCache = await res.json();
+        updateNotificationUI();
+    } catch (error) {
+        console.error("Error loading notifications:", error.message);
+    }
+}
+
+function updateNotificationUI() {
+    const countBadge = document.getElementById('notificationCount');
+    const notificationList = document.getElementById('notificationList');
+    if (!countBadge || !notificationList) return;
+
+    if (unreadNotificationsCache.length > 0) {
+        countBadge.textContent = unreadNotificationsCache.length;
+        countBadge.style.display = 'inline-block';
+
+        const iconMap = {
+            'info': 'fa-info-circle',
+            'success': 'fa-check-circle',
+            'warning': 'fa-exclamation-triangle',
+            'danger': 'fa-exclamation-circle'
+        };
+
+        notificationList.innerHTML = unreadNotificationsCache.map(n => `
+            <div class="notification-item" data-link="${n.link || '#'}">
+                <div class="notification-icon ${n.type}">
+                    <i class="fas ${iconMap[n.type] || 'fa-bell'}"></i>
+                </div>
+                <div class="notification-content">
+                    <p>${n.message}</p>
+                    <div class="time">${formatTimeAgo(n.created_at)}</div>
+                </div>
+            </div>
+        `).join('');
+        
+        // Add click listeners to navigate
+        document.querySelectorAll('.notification-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const link = item.dataset.link;
+                if (link && link !== '#') {
+                    // This is a simple navigation. A more advanced router would be better.
+                    const section = link.split('#')[0].substring(1); // e.g., 'inventory'
+                    navigateToSection(`${section}ManagementSection`);
+                }
+                 document.getElementById('notificationDropdown').style.display = 'none';
+            });
+        });
+
+    } else {
+        countBadge.style.display = 'none';
+        notificationList.innerHTML = '<div class="notification-item-placeholder">No new notifications</div>';
+    }
+}
+
+async function markNotificationsAsRead() {
+    if (unreadNotificationsCache.length === 0) return;
+
+    const idsToMark = unreadNotificationsCache.map(n => n.id);
+    
+    // Optimistically update UI
+    const countBadge = document.getElementById('notificationCount');
+    if(countBadge) countBadge.style.display = 'none';
+    unreadNotificationsCache = []; // Clear cache
+
+    try {
+        await apiFetch(`${API}/notifications/mark-as-read`, {
+            method: 'PUT',
+            body: JSON.stringify({ ids: idsToMark })
+        });
+        // No need to do anything on success, UI is already updated
+    } catch (error) {
+        console.error("Failed to mark notifications as read on backend:", error.message);
+        // If it fails, we could potentially reload notifications to show the badge again
+    }
+}
 
 function closeAddNewDropdown() {
     const addNewDropdown = document.getElementById('addNewDropdown');

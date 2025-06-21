@@ -25,7 +25,8 @@ const productRoutes = require('./routes/productRoutes');
 const productSupplierRoutes = require('./routes/productSupplierRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const auditLogRoutesFromFile = require('./routes/auditLogRoutes');
-
+const notificationRoutes = require('./routes/notificationRoutes'); // <-- Add this
+const authRoutes = require('./routes/authRoutes');
 const app = express();
 
 // --- 1. Core Middleware ---
@@ -50,6 +51,7 @@ apiRouter.use('/product-suppliers', checkAuth, auditLogMiddleware, productSuppli
 apiRouter.use('/invoices', checkAuth, auditLogMiddleware, invoiceRoutes);
 apiRouter.use('/ledger', checkAuth, ledgerRoutes);
 apiRouter.use('/reports', checkAuth, reportRoutes);
+apiRouter.use('/notifications', checkAuth, notificationRoutes);
 apiRouter.use('/auditlog', checkAuth, checkRole(['admin']), auditLogRoutesFromFile);
 
 // Use the API router for all /api paths
