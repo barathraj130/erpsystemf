@@ -556,7 +556,9 @@ function navigateToSection(sectionId) {
         else if (headerText.includes("Ledgers")) headerText = "Business Ledgers";
         else if (headerText.includes("Business Finance")) headerText = "Business Finance";
         else if (headerText.includes("Reports")) headerText = "Reports & Analytics";
-
+         else if (sectionId === "companySection") {
+        loadAndDisplayCompanyExpenses();
+    }
         if(mainHeader) mainHeader.textContent = headerText;
 
         if (sectionId === "dashboardAnalytics") {
@@ -579,7 +581,10 @@ function navigateToSection(sectionId) {
         }
          else if (sectionId === "ledgersSection") {
             showLedger('cash');
-        } else if (sectionId === "businessFinanceSection") {
+        }  else if (sectionId === "companySection") {
+            loadAndDisplayCompanyExpenses();
+        }
+        else if (sectionId === "businessFinanceSection") {
             loadAllTransactions().then(() => {
                 loadLenders(null, true).then(() => {
                     populateAgreementEntityDropdown();
@@ -5908,6 +5913,8 @@ function openCompanyExpenseModal(preselectCategory = null) {
     document.getElementById("expenseDate").value = new Date().toISOString().split("T")[0];
     modal.style.display = "block";
 }
+
+// Add this function near the other "closeModal" functions
 function closeCompanyExpenseModal() {
     const modal = document.getElementById("companyExpenseModal");
     if(modal) modal.style.display = "none";

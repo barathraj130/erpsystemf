@@ -3,15 +3,18 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// --- NEW HELPER FUNCTION TO CREATE THE MISSING TRANSACTION ---
-// This function is the core of the fix. It runs when a preferred supplier is set.
+// --- NEW HELPER FUNCTION TO CREATE THE MISSING TRANSACTION (CORRECTED) ---
+// This function now robustly checks to prevent duplicate transactions.
 async function createInitialStockTransaction(productId, supplierId, purchasePrice) {
     console.log(`[AUTO-TX] Checking if initial stock transaction is needed for Product ID: ${productId}, Supplier ID: ${supplierId}`);
     
     return new Promise((resolve, reject) => {
         // Step 1: Get the product's current stock.
         db.get('SELECT current_stock FROM products WHERE id = ?', [productId], (err, product) => {
-            if (err) return reject(new Error('Failed to find product for stock check.'));
+            if (err) {
+                console.error(`[AUTO-TX-ERROR] Failed to find product ${productId}:`, err.message);
+                return reject(new Error('Failed to find product for stock check.'));
+            }
             
             // Step 2: If there's no stock or no purchase price, we don't need a transaction.
             if (!product || product.current_stock <= 0) {
@@ -25,12 +28,15 @@ async function createInitialStockTransaction(productId, supplierId, purchasePric
                 return resolve();
             }
 
-            // Step 3: IMPORTANT - Check if we've ALREADY created this transaction to avoid duplicates.
+            // Step 3: IMPORTANT - Check if an initial stock transaction has ALREADY been created for this product. This prevents double-counting.
             const checkSql = `SELECT id FROM transactions WHERE category = 'Initial Stock Purchase (On Credit)' AND description LIKE ?`;
             const checkDesc = `Initial stock value for product ID ${productId}%`;
 
             db.get(checkSql, [checkDesc], (err, existingTx) => {
-                if (err) return reject(new Error('Failed to check for existing initial stock transaction.'));
+                if (err) {
+                    console.error(`[AUTO-TX-ERROR] DB error checking for existing tx for product ${productId}:`, err.message);
+                    return reject(new Error('Failed to check for existing initial stock transaction.'));
+                }
                 
                 if (existingTx) {
                     console.log(`[AUTO-TX] Initial stock transaction for product ${productId} already exists (ID: ${existingTx.id}). Skipping creation.`);
@@ -46,7 +52,10 @@ async function createInitialStockTransaction(productId, supplierId, purchasePric
 
                 // The 'amount' is POSITIVE because it increases the supplier's payable balance.
                 db.run(insertSql, [supplierId, stockValue, description, category, date], function(err) {
-                    if (err) return reject(new Error('Failed to create initial stock transaction.'));
+                    if (err) {
+                         console.error(`[AUTO-TX-ERROR] Failed to create initial stock tx for product ${productId}:`, err.message);
+                        return reject(new Error('Failed to create initial stock transaction.'));
+                    }
                     console.log(`[AUTO-TX] SUCCESS: Automatically created initial stock purchase transaction ID: ${this.lastID} for product ${productId}. Amount: ${stockValue}`);
                     resolve();
                 });
@@ -149,8 +158,7 @@ router.post('/', (req, res) => {
             return res.status(500).json({ error: "Failed to link product to supplier." });
         }
 
-        // --- AUTOMATION LOGIC TRIGGER ---
-        // If this new link is for a preferred supplier and has a price, call our helper.
+        // --- AUTOMATION LOGIC TRIGGER (AWAITED) ---
         if (is_preferred && finalPurchasePrice > 0) {
             try {
                 await createInitialStockTransaction(product_id, supplier_id, finalPurchasePrice);
@@ -186,7 +194,7 @@ router.put('/:productSupplierId', (req, res) => {
         is_preferred ? 1 : 0,
         notes || null,
         productSupplierId
-    ], async function(err) {
+    ], function(err) {
         if (err) {
             console.error("Error updating product-supplier link:", err.message);
             return res.status(500).json({ error: "Failed to update product-supplier link." });
@@ -195,8 +203,7 @@ router.put('/:productSupplierId', (req, res) => {
             return res.status(404).json({ error: "Product-supplier link not found." });
         }
 
-        // --- AUTOMATION LOGIC TRIGGER ---
-        // If the update resulted in this supplier becoming preferred, call our helper.
+        // --- AUTOMATION LOGIC TRIGGER (AWAITED) ---
         if (is_preferred && finalPurchasePrice > 0) {
             db.get('SELECT product_id, supplier_id FROM product_suppliers WHERE id = ?', [productSupplierId], async (e, link) => {
                 if (e || !link) {
