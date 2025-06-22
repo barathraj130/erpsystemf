@@ -23,7 +23,7 @@ const productSupplierRoutes = require('./routes/productSupplierRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const auditLogRoutesFromFile = require('./routes/auditLogRoutes');
 const notificationRoutes = require('./routes/notificationRoutes'); // <-- Add this
-const authRoutes = require('./routes/authRoutes');
+
 const app = express();
 
 // --- 1. Core Middleware ---
