@@ -1,13 +1,10 @@
-// --- START OF FILE server.js ---
-
-// --- START OF COMPLETE server.js FILE (DEFINITIVE FIX) ---
-
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const db = require('./db');
 const cron = require('node-cron');
 const { exec } = require('child_process');
+const disk = require('diskusage'); // <-- NEW: Import diskusage
 
 // --- Middleware Imports ---
 const { auditLogMiddleware } = require('./middlewares/auditLogMiddleware');
@@ -54,27 +51,67 @@ apiRouter.use('/reports', checkAuth, reportRoutes);
 apiRouter.use('/notifications', checkAuth, notificationRoutes);
 apiRouter.use('/auditlog', checkAuth, checkRole(['admin']), auditLogRoutesFromFile);
 
+// --- NEW: System Status Route ---
+apiRouter.get('/system/status', checkAuth, async (req, res) => {
+    try {
+        // 1. Database Check
+        const dbPromise = new Promise((resolve) => {
+            db.get("SELECT 1", (err) => {
+                resolve(err ? 'Error' : 'Operational');
+            });
+        });
+
+        // 2. API Status (if this code runs, API is up)
+        const apiStatus = 'Operational';
+
+        // 3. Storage Check
+        const storagePromise = new Promise((resolve) => {
+            // For Windows, use 'c:'. For Linux/macOS, use '/'.
+            const checkPath = process.platform === 'win32' ? 'c:' : '/';
+            disk.check(checkPath, (err, info) => {
+                if (err) {
+                    console.error("Disk usage check failed:", err);
+                    resolve('Unknown');
+                } else {
+                    const freePercent = (info.available / info.total) * 100;
+                    if (freePercent < 10) resolve('Critical'); // Less than 10% free
+                    else if (freePercent < 25) resolve('High Usage'); // Less than 25% free
+                    else resolve('Operational');
+                }
+            });
+        });
+
+        const [dbStatus, storageStatus] = await Promise.all([dbPromise, storagePromise]);
+
+        res.json({
+            database: dbStatus,
+            api: apiStatus,
+            storage: storageStatus
+        });
+
+    } catch (error) {
+        console.error("Error in system status check:", error);
+        res.status(500).json({
+            database: 'Unknown',
+            api: 'Error',
+            storage: 'Unknown'
+        });
+    }
+});
+
+
 // Use the API router for all /api paths
 app.use('/api', apiRouter);
 
 
 // --- 3. Frontend Routes ---
-
-// FIX: Serve all static frontend files from a dedicated 'public' directory.
-// This is the standard and robust practice.
-// All HTML, CSS, and client-side JS files should be moved into this 'public' folder.
 const publicPath = path.join(__dirname, 'public');
 app.use(express.static(publicPath));
 
-// The catch-all route for the Single-Page Application.
-// This MUST be the last non-error-handling route.
-// It serves the main application shell, and client-side routing takes over.
 app.get('*', (req, res, next) => {
-    // If the request is for an API endpoint that wasn't found, let it fall through.
     if (req.path.startsWith('/api/')) {
         return next();
     }
-    // For any other request, send the main index.html file from the public directory.
     res.sendFile(path.join(publicPath, 'index.html'), (err) => {
         if (err) {
             console.error("Error sending index.html from public directory:", err);

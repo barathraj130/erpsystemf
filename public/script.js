@@ -119,7 +119,9 @@ const transactionCategories = [
     { name: "Other Business Income (Bank)", type: "bank_income", group: "biz_ops", affectsLedger: "bank", relevantTo: "none" },
     { name: "Other Business Expense (Cash)", type: "cash_expense", group: "biz_ops", affectsLedger: "cash", relevantTo: "none" },
     { name: "Other Business Expense (Bank)", type: "bank_expense", group: "biz_ops", affectsLedger: "bank", relevantTo: "none" },
-
+    //opening in settings
+    { name: "Opening Balance - Bank", type: "bank_income", group: "opening_balance", affectsLedger: "bank", relevantTo: "none" },
+    { name: "Opening Balance - Cash", type: "cash_income", group: "opening_balance", affectsLedger: "cash", relevantTo: "none" },
     // Inventory Adjustments
     { name: "Stock Adjustment (Increase)", type: "neutral_stock", group: "inventory_adjustment", isProductPurchase: true, affectsLedger: "none", relevantTo: "none" },
     { name: "Stock Adjustment (Decrease)", type: "neutral_stock", group: "inventory_adjustment", isProductSale: true, affectsLedger: "none", relevantTo: "none" },
@@ -342,6 +344,7 @@ function setupEventListeners() {
     document
         .getElementById("userForm")
         .addEventListener("submit", handleUserSubmit);
+        document.getElementById('openingBalanceForm').addEventListener('submit', handleOpeningBalanceSubmit);
     document
         .getElementById("transactionForm")
         .addEventListener("submit", handleTransactionSubmit);
@@ -792,14 +795,18 @@ function calculatePercentageChange(current, previous) {
 
     return ((current - previous) / Math.abs(previous)) * 100;
 }
-
 function updateDashboardCards() {
     const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
 
-    document.getElementById('navCustomerCount').textContent = customersOnly.length;
-    document.getElementById('navSupplierCount').textContent = externalEntitiesCache.filter(e => e.entity_type === 'Supplier').length;
-    document.getElementById('navInventoryCount').textContent = productsCache.length;
-    document.getElementById('navInvoiceCount').textContent = invoicesCache.length;
+    const navCustomerCount = document.getElementById('navCustomerCount');
+    const navSupplierCount = document.getElementById('navSupplierCount');
+    const navInventoryCount = document.getElementById('navInventoryCount');
+    const navInvoiceCount = document.getElementById('navInvoiceCount');
+
+    if(navCustomerCount) navCustomerCount.textContent = customersOnly.length;
+    if(navSupplierCount) navSupplierCount.textContent = externalEntitiesCache.filter(e => e.entity_type === 'Supplier').length;
+    if(navInventoryCount) navInventoryCount.textContent = productsCache.length;
+    if(navInvoiceCount) navInvoiceCount.textContent = invoicesCache.length;
 
     const period = document.getElementById('dashboardPeriod')?.value || 'this_month';
     const ranges = getPeriodDateRanges(period);
@@ -808,56 +815,106 @@ function updateDashboardCards() {
     let previousRevenue = 0;
     let newCustomersCurrent = 0;
 
+    // 1. Calculate revenue from invoices
     invoicesCache.forEach(inv => {
         const invDate = new Date(inv.invoice_date);
         if (inv.status !== 'Void' && inv.status !== 'Draft') {
             const revenue = parseFloat(inv.amount_before_tax || 0);
             if (invDate >= ranges.currentStart && invDate <= ranges.currentEnd) {
                 currentRevenue += revenue;
-            } else if (invDate >= ranges.previousStart && invDate <= ranges.previousEnd) {
+            } else if (invDate >= ranges.previousStart && invDate <= ranges.currentEnd) { // Note: previousEnd should be used
                 previousRevenue += revenue;
             }
         }
     });
+    
+    // --- THE FIX IS HERE ---
+    // 2. Add revenue from direct transactions, EXCLUDING opening balances
+    allTransactionsCache.forEach(tx => {
+        const txDate = new Date(tx.date);
+        const catInfo = transactionCategories.find(c => c.name === tx.category);
 
+        // This is the critical check: ensure the group is not 'opening_balance'
+        if (!catInfo || catInfo.group === 'opening_balance') {
+            return; 
+        }
+
+        // Check if transaction is within the current period
+        if (txDate >= ranges.currentStart && txDate <= ranges.currentEnd) {
+            if (catInfo.type.includes('income') && !tx.related_invoice_id) {
+                if(catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops') {
+                     currentRevenue += parseFloat(tx.amount || 0);
+                }
+            }
+        } 
+        // Check if transaction is within the previous period for comparison
+        else if (txDate >= ranges.previousStart && txDate <= ranges.previousEnd) { // Corrected to previousEnd
+            if (catInfo.type.includes('income') && !tx.related_invoice_id) {
+                 if(catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops') {
+                    previousRevenue += parseFloat(tx.amount || 0);
+                 }
+            }
+        }
+    });
+    
     customersOnly.forEach(user => {
         const joinDate = new Date(user.created_at);
         if (joinDate >= ranges.currentStart && joinDate <= ranges.currentEnd) {
             newCustomersCurrent++;
         }
     });
-
-    document.getElementById("monthlyRevenue").textContent = `₹${currentRevenue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-    const revenueChangeEl = document.getElementById("revenueChange");
-    const revenueChangePercent = calculatePercentageChange(currentRevenue, previousRevenue);
-    revenueChangeEl.textContent = `${revenueChangePercent >= 0 ? '+' : ''}${revenueChangePercent.toFixed(1)}%`;
-    revenueChangeEl.className = revenueChangePercent >= 0 ? 'kpi-change positive' : 'kpi-change negative';
-
-    document.getElementById("totalCustomers").textContent = customersOnly.length;
-    document.getElementById("customersChange").textContent = `+${newCustomersCurrent} new`;
     
-    document.getElementById("totalProducts").textContent = productsCache.length;
+    const monthlyRevenueEl = document.getElementById("monthlyRevenue");
+    if (monthlyRevenueEl) {
+        monthlyRevenueEl.textContent = `₹${currentRevenue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    }
+
+    const revenueChangeEl = document.getElementById("revenueChange");
+    if (revenueChangeEl) {
+        const revenueChangePercent = calculatePercentageChange(currentRevenue, previousRevenue);
+        revenueChangeEl.textContent = `${revenueChangePercent >= 0 ? '+' : ''}${revenueChangePercent.toFixed(1)}%`;
+        revenueChangeEl.className = revenueChangePercent >= 0 ? 'kpi-change positive' : 'kpi-change negative';
+    }
+
+    const totalCustomersEl = document.getElementById("totalCustomers");
+    if(totalCustomersEl) totalCustomersEl.textContent = customersOnly.length;
+    
+    const customersChangeEl = document.getElementById("customersChange");
+    if(customersChangeEl) customersChangeEl.textContent = `+${newCustomersCurrent} new`;
+    
+    const totalProductsEl = document.getElementById("totalProducts");
+    if(totalProductsEl) totalProductsEl.textContent = productsCache.length;
 
     const pendingInv = invoicesCache.filter(inv => inv.status !== "Paid" && inv.status !== "Void");
     const pendingAmt = pendingInv.reduce((sum, inv) => sum + parseFloat(inv.total_amount || 0) - parseFloat(inv.paid_amount || 0), 0);
-    document.getElementById("pendingInvoices").textContent = `${pendingInv.length} invoices`;
-    document.getElementById("pendingAmount").textContent = `₹${pendingAmt.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    
+    const pendingInvoicesEl = document.getElementById("pendingInvoices");
+    if(pendingInvoicesEl) pendingInvoicesEl.textContent = `${pendingInv.length} invoices`;
+    
+    const pendingAmountEl = document.getElementById("pendingAmount");
+    if(pendingAmountEl) pendingAmountEl.textContent = `₹${pendingAmt.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
 
     const lowStockCount = productsCache.filter(p => p.low_stock_threshold > 0 && p.current_stock <= p.low_stock_threshold).length;
     const lowStockAlertEl = document.getElementById("lowStockAlert");
-    lowStockAlertEl.textContent = `${lowStockCount} low stock`;
-    lowStockAlertEl.style.color = lowStockCount > 0 ? 'var(--danger-color)' : 'var(--text-light-color)';
+    if(lowStockAlertEl){
+        lowStockAlertEl.textContent = `${lowStockCount} low stock`;
+        lowStockAlertEl.style.color = lowStockCount > 0 ? 'var(--danger-color)' : 'var(--text-light-color)';
+    }
     
     const todayStr = new Date().toISOString().split('T')[0];
     const todaysInvoices = invoicesCache.filter(inv => inv.invoice_date.startsWith(todayStr) && inv.status !== 'Void' && inv.status !== 'Draft');
     const todaysRevenue = todaysInvoices.reduce((sum, inv) => sum + parseFloat(inv.amount_before_tax || 0), 0);
     const avgOrderValue = todaysInvoices.length > 0 ? todaysRevenue / todaysInvoices.length : 0;
     
-    document.getElementById('todayRevenue').textContent = `₹${todaysRevenue.toFixed(2)}`;
-    document.getElementById('todayOrders').textContent = todaysInvoices.length;
-    document.getElementById('todayAvgOrder').textContent = `₹${avgOrderValue.toFixed(2)}`;
-}
+    const todayRevenueEl = document.getElementById('todayRevenue');
+    if(todayRevenueEl) todayRevenueEl.textContent = `₹${todaysRevenue.toFixed(2)}`;
+    
+    const todayOrdersEl = document.getElementById('todayOrders');
+    if(todayOrdersEl) todayOrdersEl.textContent = todaysInvoices.length;
 
+    const todayAvgOrderEl = document.getElementById('todayAvgOrder');
+    if(todayAvgOrderEl) todayAvgOrderEl.textContent = `₹${avgOrderValue.toFixed(2)}`;
+}
 async function populateUserDropdown() {
     try {
         if (!Array.isArray(usersDataCache) || (usersDataCache.length === 0 && !isLoadingUsers)) {
@@ -4866,43 +4923,78 @@ async function generateAndDisplayReport(reportType, view = 'monthly') {
 function generatePnlReport(transactions, period) {
     let totalRevenue = 0;
     let totalCogs = 0;
-    let totalExpenses = 0;
+    let otherIncome = 0;
+    let operatingExpenses = 0;
+    let interestPaid = 0;
 
-    invoicesCache.forEach(invoice => {
-        if(invoice.invoice_date.startsWith(period) && invoice.status !== 'Void' && invoice.status !== 'Draft'){
-            totalRevenue += parseFloat(invoice.amount_before_tax || 0);
-            // A simple COGS estimation, this should be improved in a real system
-            totalCogs += parseFloat(invoice.amount_before_tax || 0) * 0.60; 
+    // 1. Calculate Revenue and COGS from Invoices
+    const monthlyInvoices = invoicesCache.filter(inv => 
+        inv.invoice_date.startsWith(period) && 
+        inv.status !== 'Void' && 
+        inv.status !== 'Draft'
+    );
+
+    monthlyInvoices.forEach(invoice => {
+        totalRevenue += parseFloat(invoice.amount_before_tax || 0);
+        
+        // Calculate COGS accurately
+        if (invoice.line_items) {
+            invoice.line_items.forEach(item => {
+                if (item.product_id) {
+                    const product = productsCache.find(p => p.id === item.product_id);
+                    if (product) {
+                        totalCogs += (parseFloat(product.cost_price) || 0) * (parseFloat(item.quantity) || 0);
+                    }
+                }
+            });
         }
     });
 
+    // 2. Calculate Other Income and Expenses from Transactions
     transactions.forEach(tx => {
         const catInfo = transactionCategories.find(c => c.name === tx.category);
+        if (!catInfo) return;
+
         const amount = parseFloat(tx.amount || 0);
-        if (catInfo && catInfo.group === 'biz_ops' && amount < 0) {
-            totalExpenses += Math.abs(amount);
+
+        // Capture other income (e.g., interest received, bank interest)
+        if (catInfo.type.includes('income') && !catInfo.group.includes('customer_revenue') && !catInfo.group.includes('customer_payment')) {
+             otherIncome += Math.abs(amount);
+        }
+        
+        // Capture operating expenses (rent, salaries, etc.)
+        if (catInfo.group === 'biz_ops' && amount < 0) {
+            operatingExpenses += Math.abs(amount);
+        }
+
+        // Capture interest paid on business loans
+        if (catInfo.name.startsWith('Loan Interest Paid by Business')) {
+            interestPaid += Math.abs(amount);
         }
     });
 
     const grossProfit = totalRevenue - totalCogs;
-    const netProfit = grossProfit - totalExpenses;
+    const totalExpenses = operatingExpenses + interestPaid;
+    const netProfit = grossProfit + otherIncome - totalExpenses;
 
     return `
         <h3 class="report-title">Profit & Loss Summary - ${period}</h3>
         <div class="pnl-summary-grid">
             <div class="pnl-card"><h5>Total Revenue</h5><p class="positive">₹${totalRevenue.toFixed(2)}</p></div>
-            <div class="pnl-card"><h5>Cost of Goods Sold (Est.)</h5><p class="negative">₹${totalCogs.toFixed(2)}</p></div>
+            <div class="pnl-card"><h5>Cost of Goods Sold</h5><p class="negative">₹${totalCogs.toFixed(2)}</p></div>
             <div class="pnl-card gross-profit"><h5>Gross Profit</h5><p>₹${grossProfit.toFixed(2)}</p></div>
-            <div class="pnl-card"><h5>Operating Expenses</h5><p class="negative">₹${totalExpenses.toFixed(2)}</p></div>
+            <div class="pnl-card"><h5>Other Income</h5><p class="positive">₹${otherIncome.toFixed(2)}</p></div>
+            <div class="pnl-card"><h5>Operating Expenses</h5><p class="negative">₹${operatingExpenses.toFixed(2)}</p></div>
+            <div class="pnl-card"><h5>Interest Paid</h5><p class="negative">₹${interestPaid.toFixed(2)}</p></div>
         </div>
         <div class="pnl-summary-grid">
             <div class="pnl-card net-profit" style="grid-column: 1 / -1;">
-                <h5>Net Profit</h5><p>₹${netProfit.toFixed(2)}</p>
+                <h5>Net Profit / (Loss)</h5><p class="${netProfit >= 0 ? 'positive' : 'negative'}">₹${netProfit.toFixed(2)}</p>
             </div>
         </div>
+        <p style="font-size: 0.8em; text-align: center; margin-top: 15px; color: #666;">Note: This is an estimated P&L statement. COGS is based on the cost price at the time of sale. Revenue is recognized on the invoice date.</p>
     `;
 }
-
 function generateCashFlowReport(transactions, period) {
     return `
         <h3 class="report-title">Monthly Cash Flow - ${period}</h3>
@@ -5189,12 +5281,12 @@ function initializeDashboardCharts() {
     createRevenueChart();
     createCategoryChart();
 }
-
-
 function createRevenueChart() {
     const canvas = document.getElementById("revenueChart");
     if (!canvas) return;
-    if (revenueChartInstance) { revenueChartInstance.destroy(); }
+    if (revenueChartInstance) {
+        revenueChartInstance.destroy();
+    }
     
     const ctx = canvas.getContext("2d");
     const period = document.getElementById('dashboardPeriod').value;
@@ -5205,63 +5297,79 @@ function createRevenueChart() {
     today.setHours(23, 59, 59, 999); 
     const loopEndDate = today < ranges.currentEnd ? today : ranges.currentEnd;
 
-    const labels = [];
-    const dataPoints = [];
     const aggregatedData = new Map();
 
-    const relevantInvoices = invoicesCache.filter(inv => {
-        const invDate = new Date(inv.invoice_date);
-        return invDate >= ranges.currentStart && invDate <= ranges.currentEnd && inv.status !== 'Void' && inv.status !== 'Draft';
-    });
-
+    // Initialize date keys for daily granularity to show days with zero revenue
     if (granularity === 'daily') {
         let currentDate = new Date(ranges.currentStart);
         while (currentDate <= loopEndDate) {
             aggregatedData.set(currentDate.toISOString().split('T')[0], 0);
             currentDate.setDate(currentDate.getDate() + 1);
         }
-        relevantInvoices.forEach(inv => {
-            const dateStr = inv.invoice_date.split('T')[0];
-            const revenue = parseFloat(inv.amount_before_tax || 0);
-            if (aggregatedData.has(dateStr)) {
-                aggregatedData.set(dateStr, (aggregatedData.get(dateStr) || 0) + revenue);
-            }
-        });
-        aggregatedData.forEach((value, key) => {
-            labels.push(new Date(key).toLocaleDateString("en-US", { month: "short", day: "numeric" }));
-            dataPoints.push(value);
-        });
-    } else if (granularity === 'weekly') {
-        relevantInvoices.forEach(inv => {
-            const invDate = new Date(inv.invoice_date);
-            const dayOfWeek = invDate.getDay();
-            const firstDayOfWeek = new Date(invDate.setDate(invDate.getDate() - dayOfWeek));
-            const weekKey = firstDayOfWeek.toISOString().split('T')[0];
-            const revenue = parseFloat(inv.amount_before_tax || 0);
-            aggregatedData.set(weekKey, (aggregatedData.get(weekKey) || 0) + revenue);
-        });
-        const sortedWeeks = Array.from(aggregatedData.keys()).sort();
-        sortedWeeks.forEach(weekKey => {
-            labels.push(`Wk of ${new Date(weekKey).toLocaleDateString("en-US", { month: 'short', day: 'numeric' })}`);
-            dataPoints.push(aggregatedData.get(weekKey));
-        });
-    } else if (granularity === 'monthly') {
-        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        for(let i=0; i<12; i++) {
-             if (new Date(ranges.currentStart.getFullYear(), i, 1) > ranges.currentEnd) break;
-             if (new Date(ranges.currentStart.getFullYear(), i+1, 0) < ranges.currentStart) continue;
-             aggregatedData.set(i, 0); // Key is month index (0-11)
-        }
-        relevantInvoices.forEach(inv => {
-            const monthIndex = new Date(inv.invoice_date).getMonth();
-            const revenue = parseFloat(inv.amount_before_tax || 0);
-            aggregatedData.set(monthIndex, (aggregatedData.get(monthIndex) || 0) + revenue);
-        });
-         aggregatedData.forEach((value, key) => {
-            labels.push(monthNames[key]);
-            dataPoints.push(value);
-        });
     }
+
+    // 1. Aggregate revenue from INVOICES
+    invoicesCache.forEach(inv => {
+        const invDate = new Date(inv.invoice_date);
+        if (invDate >= ranges.currentStart && invDate <= ranges.currentEnd && inv.status !== 'Void' && inv.status !== 'Draft') {
+            const revenue = parseFloat(inv.amount_before_tax || 0);
+            const dateStr = inv.invoice_date.split('T')[0];
+            let key;
+
+            if (granularity === 'daily') {
+                key = dateStr;
+            } else if (granularity === 'weekly') {
+                const d = new Date(dateStr);
+                const day = d.getDay();
+                const diff = d.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
+                key = new Date(d.setDate(diff)).toISOString().split('T')[0];
+            } else { // monthly
+                key = dateStr.substring(0, 7);
+            }
+            aggregatedData.set(key, (aggregatedData.get(key) || 0) + revenue);
+        }
+    });
+
+    // 2. Aggregate revenue from direct TRANSACTIONS
+    allTransactionsCache.forEach(tx => {
+        const txDate = new Date(tx.date);
+        const catInfo = transactionCategories.find(c => c.name === tx.category);
+        if (txDate >= ranges.currentStart && txDate <= ranges.currentEnd && catInfo && catInfo.type.includes('income') && !tx.related_invoice_id && (catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops')) {
+            const revenue = parseFloat(tx.amount || 0);
+            const dateStr = tx.date;
+            let key;
+            
+            if (granularity === 'daily') {
+                key = dateStr;
+            } else if (granularity === 'weekly') {
+                const d = new Date(dateStr);
+                const day = d.getDay();
+                const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+                key = new Date(d.setDate(diff)).toISOString().split('T')[0];
+            } else { // monthly
+                key = dateStr.substring(0, 7);
+            }
+            aggregatedData.set(key, (aggregatedData.get(key) || 0) + revenue);
+        }
+    });
+    
+    // --- THE FIX IS HERE ---
+    // Correctly sort and format labels and data points for all granularities.
+    const sortedKeys = Array.from(aggregatedData.keys()).sort((a, b) => new Date(a) - new Date(b));
+    const labels = sortedKeys.map(key => {
+        if (granularity === 'daily') {
+            return new Date(key + 'T00:00:00').toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        } else if (granularity === 'weekly') {
+            return `Wk of ${new Date(key + 'T00:00:00').toLocaleDateString("en-US", { month: 'short', day: 'numeric' })}`;
+        } else { // monthly
+            const [year, month] = key.split('-');
+            return new Date(year, month - 1).toLocaleDateString("en-US", { month: 'short', year: 'numeric' });
+        }
+    });
+    const dataPoints = sortedKeys.map(key => aggregatedData.get(key));
+
+    const maxValue = Math.max(...dataPoints, 0); // Ensure maxValue is at least 0
+    const yAxisMax = maxValue > 0 ? maxValue * 1.2 : 10; // Add 20% buffer, or default to 10 if no data
 
     revenueChartInstance = new Chart(ctx, {
         type: "line",
@@ -5281,16 +5389,33 @@ function createRevenueChart() {
         },
         options: {
             responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false }, tooltip: { callbacks: { label: (context) => `Revenue: ₹${context.parsed.y.toLocaleString()}` } } },
+            plugins: { 
+                legend: { display: false }, 
+                tooltip: { 
+                    callbacks: { 
+                        label: (context) => `Revenue: ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(context.parsed.y)}`
+                    } 
+                } 
+            },
             scales: {
-                y: { beginAtZero: true, ticks: { callback: value => "₹" + value.toLocaleString() } },
+                y: { 
+                    beginAtZero: true,
+                    max: yAxisMax,
+                    ticks: { 
+                        callback: value => new Intl.NumberFormat('en-IN', {
+                            style: 'currency',
+                            currency: 'INR',
+                            notation: 'compact',
+                            maximumFractionDigits: 1
+                        }).format(value)
+                    } 
+                },
                 x: { grid: { display: false } }
             },
             interaction: { intersect: false, mode: 'index' },
         },
     });
 }
-
 function createCategoryChart() {
     const canvas = document.getElementById("categoryChart");
     const placeholder = document.getElementById("topSellingPlaceholder");
@@ -6057,4 +6182,70 @@ function loadAndDisplayCompanyExpenses() {
             </td>
         `;
     });
+}
+async function handleOpeningBalanceSubmit(e) {
+    e.preventDefault();
+    
+    const bankBalance = parseFloat(document.getElementById('opening_bank_balance').value);
+    const cashBalance = parseFloat(document.getElementById('opening_cash_balance').value);
+    const balanceDate = document.getElementById('opening_balance_date').value;
+
+    if (isNaN(bankBalance) || isNaN(cashBalance) || !balanceDate) {
+        alert("Please enter valid numbers for both balances and select a date.");
+        return;
+    }
+
+    if (!confirm(`Are you sure you want to set the opening balances?\n\nBank: ₹${bankBalance.toFixed(2)}\nCash: ₹${cashBalance.toFixed(2)}\nAs of: ${balanceDate}\n\nThis is a one-time setup action and should not be repeated.`)) {
+        return;
+    }
+
+    const transactionsToCreate = [];
+
+    if (bankBalance !== 0) {
+        transactionsToCreate.push({
+            amount: bankBalance,
+            description: `Opening balance as of ${balanceDate}`,
+            category: "Opening Balance - Bank",
+            date: balanceDate
+        });
+    }
+
+    if (cashBalance !== 0) {
+        transactionsToCreate.push({
+            amount: cashBalance,
+            description: `Opening balance as of ${balanceDate}`,
+            category: "Opening Balance - Cash",
+            date: balanceDate
+        });
+    }
+
+    if (transactionsToCreate.length === 0) {
+        alert("Both balances are zero. Nothing to set.");
+        return;
+    }
+
+    try {
+        // We send each transaction request one by one
+        for (const txData of transactionsToCreate) {
+            const res = await apiFetch(`${API}/transactions`, {
+                method: 'POST',
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(txData)
+            });
+            if (!res || !res.ok) {
+                const result = await res.json();
+                throw new Error(result.error || `Failed to create transaction for ${txData.category}`);
+            }
+        }
+
+        alert("Opening balance transactions created successfully!");
+        
+        // Refresh relevant data
+        await loadAllTransactions();
+        navigateToSection('ledgersSection'); // Navigate to ledgers to see the result
+        
+    } catch (error) {
+        console.error("Error setting opening balances:", error);
+        alert("Error: " + error.message);
+    }
 }

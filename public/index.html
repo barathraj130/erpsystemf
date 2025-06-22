@@ -30,9 +30,9 @@
         <a href="#" class="nav-item" data-section="ledgersSection"><i class="fas fa-book"></i> Ledgers</a>
         <a href="#" class="nav-item" data-section="businessFinanceSection"><i class="fas fa-briefcase"></i> Business Finance</a>
         <a href="#" class="nav-item" data-section="reportsSection"><i class="fas fa-chart-pie"></i> Reports</a>
+        <a href="#" class="nav-item" data-section="systemToolsSection"><i class="fas fa-cog"></i> Settings</a>
       </nav>
        <div class="sidebar-footer">
-        <a href="#" class="nav-item"><i class="fas fa-cog"></i> Settings</a>
         <a href="#" class="nav-item" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</a>
       </div>
     </aside>
@@ -463,11 +463,45 @@
               <!-- Report content will be injected here by JavaScript -->
           </div>
         </section>
+        
+        <!-- NEW SYSTEM TOOLS SECTION -->
+        <section id="systemToolsSection" class="app-section" style="display: none;">
+          <div class="section-header">
+              <h2>System Settings & Tools</h2>
+          </div>
+          <div class="settings-card" style="background-color: var(--card-bg-color); border-radius: var(--border-radius); padding: 25px; box-shadow: var(--box-shadow); max-width: 700px;">
+              <h3>Set Opening Balances</h3>
+              <p style="color: var(--text-light-color); margin-bottom: 20px; font-size: 0.9em;">
+                  Use this tool <strong>ONCE</strong> to set the starting balances for your cash and bank ledgers. 
+                  This should be your final closing balance from your previous system.
+              </p>
+              <form id="openingBalanceForm">
+                  <div class="form-row">
+                      <div class="form-group">
+                          <label for="opening_bank_balance">Bank Opening Balance (₹)</label>
+                          <input type="number" id="opening_bank_balance" class="form-control" step="0.01" required value="304500.00">
+                      </div>
+                      <div class="form-group">
+                          <label for="opening_cash_balance">Cash Opening Balance (₹)</label>
+                          <input type="number" id="opening_cash_balance" class="form-control" step="0.01" required value="0.00">
+                      </div>
+                  </div>
+                   <div class="form-group">
+                          <label for="opening_balance_date">As of Date (Cut-off Date)</label>
+                          <input type="date" id="opening_balance_date" class="form-control" required>
+                      </div>
+                  <button type="submit" class="btn btn-danger">
+                      <i class="fas fa-exclamation-triangle"></i> Set Balances (One-Time Action)
+                  </button>
+              </form>
+          </div>
+        </section>
+
       </main>
     </div>
   </div>
 
-  <!-- Modals -->
+  <!-- All Modals go here -->
   <div id="userModal" class="modal">
     <div class="modal-content" style="max-width: 600px;">
       <span class="close" onclick="closeUserModal()">×</span><h2>Customer</h2>
@@ -788,14 +822,12 @@
     </div>
   </div>
 
-  <!-- MODAL FOR RECORDING INITIAL LOAN FUNDS RECEIPT -->
   <div id="loanFundsReceiptModal" class="modal">
     <div class="modal-content" style="max-width: 500px;">
         <span class="close" onclick="closeLoanFundsReceiptModal()">×</span>
         <h2>Record Loan Funds</h2>
         <p>The agreement has been saved. Now, how did the business receive the funds?</p>
         <form id="loanFundsReceiptForm">
-            <!-- Hidden fields to carry over data -->
             <input type="hidden" id="receipt_agreement_id">
             <input type="hidden" id="receipt_lender_id">
             <input type="hidden" id="receipt_amount">
@@ -903,7 +935,6 @@
         </div>
     </div>
   </div>
-<!-- Add this new modal alongside the others at the end of the body tag -->
 
 <div id="companyExpenseModal" class="modal">
   <div class="modal-content" style="max-width: 500px;">
