@@ -16,7 +16,10 @@
     "check-disk-space": "^3.4.0",
     "cors": "^2.8.5",
     "diskusage": "^1.2.0",
+    "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "google-auth-library": "^9.11.0",
+    "google-spreadsheet": "^4.1.4",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^4.1.0",
     "sqlite3": "^5.1.7"

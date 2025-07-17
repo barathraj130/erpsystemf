@@ -104,6 +104,24 @@ router.post('/', (req, res) => { // Route handler starts
               console.log("<<<<< DEBUG: Transaction header created. ID:", transactionId, "for category:", category, "Amount:", amount, ">>>>>");
               let itemPromises = [];
   
+              // --- START: NEW INVOICE PAYMENT UPDATE LOGIC ---
+              if (parsedRelatedInvoiceId && category.toLowerCase().includes('payment received')) {
+                  const paymentAmount = Math.abs(amount); // Payment txns are negative, so we take the absolute value
+                  const updateInvoicePromise = new Promise((resolve, reject) => {
+                      db.run('UPDATE invoices SET paid_amount = paid_amount + ? WHERE id = ?', [paymentAmount, parsedRelatedInvoiceId], function(invErr) {
+                          if (invErr) {
+                              console.error(`<<<<< DB ERROR: Error updating paid_amount for invoice ID ${parsedRelatedInvoiceId}:`, invErr.message, ">>>>>");
+                              reject(invErr);
+                          } else {
+                              console.log(`<<<<< DEBUG: Invoice ${parsedRelatedInvoiceId} paid_amount updated by ${paymentAmount}. >>>>>`);
+                              resolve();
+                          }
+                      });
+                  });
+                  itemPromises.push(updateInvoicePromise);
+              }
+              // --- END: NEW INVOICE PAYMENT UPDATE LOGIC ---
+  
               if (Array.isArray(line_items) && line_items.length > 0) {
                    line_items.forEach(item => { 
                       if (!item.product_id || item.quantity === undefined || item.unit_price === undefined) { 
@@ -170,21 +188,21 @@ router.post('/', (req, res) => { // Route handler starts
                                db.run("ROLLBACK;");
                                return res.status(500).json({ error: "Failed to commit DB transaction: " + commitErr.message });
                           }
-                          console.log(`✅ Transaction ${transactionId} and line items (if any) processed successfully.`);
+                          console.log(`✅ Transaction ${transactionId} and related updates processed successfully.`);
                           db.get(`SELECT t.*, u.username AS customer_name, le.lender_name AS external_entity_name 
                                   FROM transactions t 
                                   LEFT JOIN users u ON t.user_id = u.id 
                                   LEFT JOIN lenders le ON t.lender_id = le.id 
                                   WHERE t.id = ?`, [transactionId], (fetchErr, newTransaction) => { 
                               if (fetchErr) {
-                                  return res.status(201).json({ id: transactionId, message: 'Transaction and line items processed (failed to fetch full details).' });
+                                  return res.status(201).json({ id: transactionId, message: 'Transaction and related updates processed (failed to fetch full details).' });
                               }
-                              res.status(201).json({ transaction: newTransaction, message: 'Transaction and line items processed.' });
+                              res.status(201).json({ transaction: newTransaction, message: 'Transaction and related updates processed.' });
                           }); 
                       }); 
                   }) 
                   .catch(itemProcessingError => { 
-                      console.error("❌ [API Logic/DB Error] Error processing line items or stock, rolling back:", itemProcessingError.message, itemProcessingError.stack);
+                      console.error("❌ [API Logic/DB Error] Error processing transaction details, rolling back:", itemProcessingError.message, itemProcessingError.stack);
                       db.run("ROLLBACK;", (rollbackErr) => { 
                           if(rollbackErr) console.error("❌ [API DB Error] Rollback failed after item processing error:", rollbackErr.message);
                       }); 
@@ -193,7 +211,7 @@ router.post('/', (req, res) => { // Route handler starts
           }); 
       }); 
     }); 
-  } // end of createTransaction function
+  }
 }); 
 // ========= END: router.post('/') =========
 
@@ -295,61 +313,80 @@ router.delete('/:id', (req, res) => {
   db.serialize(() => { 
     db.run("BEGIN TRANSACTION;");
 
-    db.get('SELECT category FROM transactions WHERE id = ?', [id], (catErr, txRow) => {
-        if (catErr) {
+    // --- START: MODIFIED LOGIC TO REVERT INVOICE PAYMENT ON DELETE ---
+    // First, get the details of the transaction we are about to delete.
+    db.get('SELECT amount, related_invoice_id, category FROM transactions WHERE id = ?', [id], (fetchErr, txToDelete) => {
+        if (fetchErr) {
             db.run("ROLLBACK;");
-            console.error("❌ [API DB Error] Error fetching transaction category for deletion:", catErr.message);
-            return res.status(500).json({ error: "Failed to prepare for transaction deletion (fetch category)." });
+            return res.status(500).json({ error: "Failed to fetch transaction details before deletion." });
         }
-        if (!txRow) {
-            db.run("ROLLBACK;");
-            return res.status(404).json({ message: 'Transaction not found for category check.' });
+        if (!txToDelete) {
+             db.run("ROLLBACK;");
+            return res.status(404).json({ message: 'Transaction not found for deletion.' });
         }
-        const originalCategory = txRow.category;
+        
+        const isPayment = (txToDelete.category || '').toLowerCase().includes('payment received');
+        const paymentReversalPromises = [];
 
-        db.all('SELECT product_id, quantity FROM transaction_line_items WHERE transaction_id = ?', [id], (errTLI, lineItems) => {
-            if (errTLI) {
-                db.run("ROLLBACK;");
-                console.error("❌ [API DB Error] Error fetching transaction line items for stock reversal:", errTLI.message);
-                return res.status(500).json({ error: "Failed to prepare for transaction deletion (fetch TLI)." });
-            }
-
-            const stockReversalPromises = (lineItems || []).map(item => {
-                return new Promise((resolve, reject) => {
-                    let stockChangeToRevert = 0;
-                    const absQuantity = Math.abs(parseFloat(item.quantity));
-
-                    if (originalCategory.toLowerCase().includes('sale to customer') && !originalCategory.toLowerCase().includes('return')) { 
-                        stockChangeToRevert = absQuantity; 
-                    } else if (originalCategory.toLowerCase().includes('purchase from supplier') && !originalCategory.toLowerCase().includes('return')) { 
-                        stockChangeToRevert = -absQuantity;
-                    } else if (originalCategory.toLowerCase().includes('product return from customer')) { 
-                        stockChangeToRevert = -absQuantity;
-                    } else if (originalCategory.toLowerCase().includes('product return to supplier')) { 
-                        stockChangeToRevert = absQuantity;
-                    } else if (originalCategory === "Stock Adjustment (Increase)") {
-                        stockChangeToRevert = -absQuantity;
-                    } else if (originalCategory === "Stock Adjustment (Decrease)") {
-                        stockChangeToRevert = absQuantity;
-                    }
-
-                    if (stockChangeToRevert !== 0 && item.product_id) {
-                        db.run("UPDATE products SET current_stock = current_stock + ? WHERE id = ?", [stockChangeToRevert, item.product_id], (stockErr) => {
-                            if (stockErr) {
-                                console.error(`❌ [API DB Error] Error reverting stock for product ${item.product_id}:`, stockErr.message);
-                                return reject(stockErr);
-                            }
-                            console.log(`✅ Stock for product ${item.product_id} reverted by ${stockChangeToRevert} due to transaction ${id} deletion.`);
-                            resolve();
-                        });
-                    } else {
-                        resolve();
+        // If it's a payment linked to an invoice, create a promise to reverse the paid amount.
+        if (txToDelete.related_invoice_id && isPayment) {
+            const amountToReverse = Math.abs(parseFloat(txToDelete.amount || 0));
+            paymentReversalPromises.push(new Promise((resolve, reject) => {
+                db.run('UPDATE invoices SET paid_amount = paid_amount - ? WHERE id = ?', [amountToReverse, txToDelete.related_invoice_id], (invErr) => {
+                    if (invErr) reject(invErr);
+                    else {
+                         console.log(`✅ Invoice ${txToDelete.related_invoice_id} paid_amount reverted by ${amountToReverse}.`);
+                         resolve();
                     }
                 });
-            });
+            }));
+        }
+        
+        // Now, continue with the original stock reversal and deletion logic
+        Promise.all(paymentReversalPromises).then(() => {
+            db.all('SELECT product_id, quantity FROM transaction_line_items WHERE transaction_id = ?', [id], (errTLI, lineItems) => {
+                if (errTLI) {
+                    db.run("ROLLBACK;");
+                    console.error("❌ [API DB Error] Error fetching transaction line items for stock reversal:", errTLI.message);
+                    return res.status(500).json({ error: "Failed to prepare for transaction deletion (fetch TLI)." });
+                }
 
-            Promise.all(stockReversalPromises)
-                .then(() => {
+                const stockReversalPromises = (lineItems || []).map(item => {
+                    return new Promise((resolve, reject) => {
+                        let stockChangeToRevert = 0;
+                        const absQuantity = Math.abs(parseFloat(item.quantity));
+                        const originalCategory = txToDelete.category;
+
+                        if (originalCategory.toLowerCase().includes('sale to customer') && !originalCategory.toLowerCase().includes('return')) { 
+                            stockChangeToRevert = absQuantity; 
+                        } else if (originalCategory.toLowerCase().includes('purchase from supplier') && !originalCategory.toLowerCase().includes('return')) { 
+                            stockChangeToRevert = -absQuantity;
+                        } else if (originalCategory.toLowerCase().includes('product return from customer')) { 
+                            stockChangeToRevert = -absQuantity;
+                        } else if (originalCategory.toLowerCase().includes('product return to supplier')) { 
+                            stockChangeToRevert = absQuantity;
+                        } else if (originalCategory === "Stock Adjustment (Increase)") {
+                            stockChangeToRevert = -absQuantity;
+                        } else if (originalCategory === "Stock Adjustment (Decrease)") {
+                            stockChangeToRevert = absQuantity;
+                        }
+
+                        if (stockChangeToRevert !== 0 && item.product_id) {
+                            db.run("UPDATE products SET current_stock = current_stock + ? WHERE id = ?", [stockChangeToRevert, item.product_id], (stockErr) => {
+                                if (stockErr) {
+                                    console.error(`❌ [API DB Error] Error reverting stock for product ${item.product_id}:`, stockErr.message);
+                                    return reject(stockErr);
+                                }
+                                console.log(`✅ Stock for product ${item.product_id} reverted by ${stockChangeToRevert} due to transaction ${id} deletion.`);
+                                resolve();
+                            });
+                        } else {
+                            resolve();
+                        }
+                    });
+                });
+
+                Promise.all(stockReversalPromises).then(() => {
                     db.run('DELETE FROM transaction_line_items WHERE transaction_id = ?', [id], (liErr) => {
                         if (liErr) { 
                             db.run("ROLLBACK;");
@@ -372,17 +409,20 @@ router.delete('/:id', (req, res) => {
                                     db.run("ROLLBACK;"); 
                                     return res.status(500).json({ error: "Failed to commit delete operation." });
                                 }
-                                res.json({ message: 'Transaction, its line items, and stock adjustments (if applicable) processed successfully.' });
+                                res.json({ message: 'Transaction and all related records processed successfully.' });
                             }); 
                         }); 
                     }); 
-                })
-                .catch(reversalError => {
+                }).catch(reversalError => {
                     db.run("ROLLBACK;");
                     console.error("❌ [API DB Error] Error during stock reversal for transaction deletion:", reversalError.message);
                     return res.status(500).json({ error: "Failed during stock reversal for transaction deletion." });
                 });
-        }); 
+            }); 
+        }).catch(reversalError => {
+             db.run("ROLLBACK;");
+             return res.status(500).json({ error: "Failed during invoice payment reversal for transaction deletion." });
+        });
     });
   }); 
 }); 

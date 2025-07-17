@@ -11,7 +11,6 @@
 <body>
     <div class="login-page-container">
         
-        <!-- Left Branding Panel -->
         <div class="branding-panel">
             <div class="branding-content">
                 <div class="logo">
@@ -25,20 +24,19 @@
             </div>
         </div>
 
-        <!-- Right Login Form Panel -->
         <div class="login-panel">
             <div class="login-box">
                 <h2>Welcome Back!</h2>
                 <p class="subtitle">Sign in to continue to your dashboard.</p>
                 
-                <form id="loginForm">
+                <form id="loginForm" novalidate>
                     <div class="input-group">
                         <i class="fas fa-user"></i>
-                        <input type="text" id="username" name="username" placeholder="Username" required>
+                        <input type="text" id="username" name="username" placeholder="Username">
                     </div>
                     <div class="input-group">
                         <i class="fas fa-lock"></i>
-                        <input type="password" id="password" name="password" placeholder="Password" required>
+                        <input type="password" id="password" name="password" placeholder="Password">
                     </div>
                     <div class="form-options">
                         <label class="remember-me">
@@ -60,7 +58,7 @@
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             if (localStorage.getItem('erp-token')) {
-                window.location.href = '/index.html';
+                window.location.href = '/dashboard.html'; // Redirect to the main app page
                 return;
             }
 
@@ -71,11 +69,18 @@
                 e.preventDefault();
                 errorMessage.textContent = '';
                 errorMessage.style.display = 'none';
+                
                 const username = loginForm.username.value;
                 const password = loginForm.password.value;
 
+                if (!username || !password) {
+                    errorMessage.textContent = 'Please fill in all fields.';
+                    errorMessage.style.display = 'block';
+                    return;
+                }
+
                 try {
-                    const res = await fetch('/api/auth/login', {
+                    const res = await fetch('/api/jwt-auth/login', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ username, password })
@@ -88,7 +93,7 @@
                     }
 
                     localStorage.setItem('erp-token', data.token);
-                    window.location.href = '/index.html';
+                    window.location.href = '/dashboard.html'; // Go to main app on success
                     
                 } catch (error) {
                     errorMessage.textContent = error.message;

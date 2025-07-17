@@ -4,153 +4,135 @@ const path = require('path');
 const db = require('./db');
 const cron = require('node-cron');
 const { exec } = require('child_process');
-const disk = require('diskusage'); // <-- NEW: Import diskusage
+const disk = require('diskusage');
 
-// --- Middleware Imports ---
 const { auditLogMiddleware } = require('./middlewares/auditLogMiddleware');
-const { authMiddleware, checkAuth, checkRole } = require('./middlewares/authMiddleware');
+const { jwtAuthMiddleware, checkJwtAuth, checkJwtRole } = require('./middlewares/jwtAuthMiddleware');
 
-// --- Route Imports ---
-const authRoutes = require('./routes/authRoutes');
-const userRoutes = require('./routes/userRoutes');
-const transactionRoutes = require('./routes/transactionRoutes');
+// --- CORRECTED ROUTE IMPORTS ---
+// Routes
+const jwtAuthRoutes = require('./routes/jwtAuthRoutes');
+const partyRoutes = require('./routes/partyRoutes'); // Formerly userRoutes, now correctly pointing to the logic for Parties/Customers
+const companyRoutes = require('./routes/companyRoutes'); // Now correctly pointing to the new file for company profile management
 const ledgerRoutes = require('./routes/ledgerRoutes');
+const inventoryRoutes = require('./routes/inventoryRoutes');
+const voucherRoutes = require('./routes/voucherRoutes');
 const reportRoutes = require('./routes/reportRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const auditLogRoutes = require('./routes/auditLogRoutes');
 const lenderRoutes = require('./routes/lenderRoutes');
 const businessAgreementRoutes = require('./routes/businessAgreementRoutes');
 const productRoutes = require('./routes/productRoutes');
 const productSupplierRoutes = require('./routes/productSupplierRoutes');
+const transactionRoutes = require('./routes/transactionRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
-const auditLogRoutesFromFile = require('./routes/auditLogRoutes');
-const notificationRoutes = require('./routes/notificationRoutes'); // <-- Add this
+const importRoutes = require('./routes/importRoutes');
 
 const app = express();
 
-// --- 1. Core Middleware ---
+// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(authMiddleware); // This middleware TRIES to decode a user from a token on every request
+app.use(jwtAuthMiddleware); // Checks token if present
 
-// --- 2. API Routes ---
+// API Router
 const apiRouter = express.Router();
 
-// Public API routes
-apiRouter.use('/auth', authRoutes);
+// Public
+apiRouter.use('/jwt-auth', jwtAuthRoutes);
 
-// Protected API routes
-apiRouter.use('/users', checkAuth, auditLogMiddleware, userRoutes);
-apiRouter.use('/transactions', checkAuth, auditLogMiddleware, transactionRoutes);
-apiRouter.use('/external-entities', checkAuth, auditLogMiddleware, lenderRoutes);
-apiRouter.use('/business-agreements', checkAuth, auditLogMiddleware, businessAgreementRoutes);
-apiRouter.use('/products', checkAuth, auditLogMiddleware, productRoutes);
-apiRouter.use('/product-suppliers', checkAuth, auditLogMiddleware, productSupplierRoutes);
-apiRouter.use('/invoices', checkAuth, auditLogMiddleware, invoiceRoutes);
-apiRouter.use('/ledger', checkAuth, ledgerRoutes);
-apiRouter.use('/reports', checkAuth, reportRoutes);
-apiRouter.use('/notifications', checkAuth, notificationRoutes);
-apiRouter.use('/auditlog', checkAuth, checkRole(['admin']), auditLogRoutesFromFile);
+// --- CORRECTED ROUTE USAGE ---
+// Protected
+apiRouter.use(checkJwtAuth);
+apiRouter.use('/users', auditLogMiddleware, partyRoutes); // Correctly uses partyRoutes for /api/users
+apiRouter.use('/companies', auditLogMiddleware, companyRoutes); // Correctly uses companyRoutes for /api/companies
+apiRouter.use('/ledgers', auditLogMiddleware, ledgerRoutes);
+apiRouter.use('/inventory', auditLogMiddleware, inventoryRoutes);
+apiRouter.use('/vouchers', auditLogMiddleware, voucherRoutes);
+apiRouter.use('/invoices', auditLogMiddleware, invoiceRoutes);
+apiRouter.use('/lenders', auditLogMiddleware, lenderRoutes);
+apiRouter.use('/business-agreements', auditLogMiddleware, businessAgreementRoutes);
+apiRouter.use('/products', auditLogMiddleware, productRoutes);
+apiRouter.use('/product-suppliers', auditLogMiddleware, productSupplierRoutes);
+apiRouter.use('/transactions', auditLogMiddleware, transactionRoutes);
+apiRouter.use('/import', auditLogMiddleware, importRoutes);
+apiRouter.use('/reports', reportRoutes);
+apiRouter.use('/notifications', notificationRoutes);
+apiRouter.use('/auditlog', checkJwtRole(['admin']), auditLogRoutes);
 
-// --- NEW: System Status Route ---
-apiRouter.get('/system/status', checkAuth, async (req, res) => {
-    try {
-        // 1. Database Check
-        const dbPromise = new Promise((resolve) => {
-            db.get("SELECT 1", (err) => {
-                resolve(err ? 'Error' : 'Operational');
-            });
-        });
+// System Status
+apiRouter.get('/system/status', async (req, res) => {
+  try {
+    const dbPromise = new Promise(resolve => {
+      db.get("SELECT 1", err => resolve(err ? 'Error' : 'Operational'));
+    });
 
-        // 2. API Status (if this code runs, API is up)
-        const apiStatus = 'Operational';
+    const storagePromise = new Promise(resolve => {
+      disk.check(process.platform === 'win32' ? 'c:' : '/', (err, info) => {
+        if (err) return resolve('Unknown');
+        const freePercent = (info.available / info.total) * 100;
+        resolve(freePercent < 10 ? 'Critical' : freePercent < 25 ? 'High Usage' : 'Operational');
+      });
+    });
 
-        // 3. Storage Check
-        const storagePromise = new Promise((resolve) => {
-            // For Windows, use 'c:'. For Linux/macOS, use '/'.
-            const checkPath = process.platform === 'win32' ? 'c:' : '/';
-            disk.check(checkPath, (err, info) => {
-                if (err) {
-                    console.error("Disk usage check failed:", err);
-                    resolve('Unknown');
-                } else {
-                    const freePercent = (info.available / info.total) * 100;
-                    if (freePercent < 10) resolve('Critical'); // Less than 10% free
-                    else if (freePercent < 25) resolve('High Usage'); // Less than 25% free
-                    else resolve('Operational');
-                }
-            });
-        });
+    const [dbStatus, storageStatus] = await Promise.all([dbPromise, storagePromise]);
+    res.json({ database: dbStatus, api: 'Operational', storage: storageStatus });
 
-        const [dbStatus, storageStatus] = await Promise.all([dbPromise, storagePromise]);
-
-        res.json({
-            database: dbStatus,
-            api: apiStatus,
-            storage: storageStatus
-        });
-
-    } catch (error) {
-        console.error("Error in system status check:", error);
-        res.status(500).json({
-            database: 'Unknown',
-            api: 'Error',
-            storage: 'Unknown'
-        });
-    }
+  } catch (err) {
+    res.status(500).json({ database: 'Unknown', api: 'Error', storage: 'Unknown' });
+  }
 });
 
-
-// Use the API router for all /api paths
+// Mount API
 app.use('/api', apiRouter);
 
-
-// --- 3. Frontend Routes ---
+// Frontend Routes
 const publicPath = path.join(__dirname, 'public');
 app.use(express.static(publicPath));
 
 app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api/')) {
-        return next();
+    if (req.path.startsWith('/api/')) return next();
+    
+    if (req.path === '/' || req.path === '/login.html') {
+        res.sendFile(path.join(publicPath, 'login.html'));
+    } 
+    else if (req.path === '/signup.html') {
+         res.sendFile(path.join(publicPath, 'signup.html'));
+    } 
+    else if (req.path.endsWith('.html')) { 
+        res.sendFile(path.join(publicPath, 'dashboard.html'));
+    } 
+    else {
+        next();
     }
-    res.sendFile(path.join(publicPath, 'index.html'), (err) => {
-        if (err) {
-            console.error("Error sending index.html from public directory:", err);
-            res.status(500).send("Server error: Could not serve the application shell.");
-        }
-    });
 });
 
 
-// --- 4. Global Error Handler ---
+// Error Handler
 app.use((err, req, res, next) => {
-  console.error('🆘 Global Server Error Handler Caught:', err.stack || err.message);
-  if (res.headersSent) {
-    return next(err);
-  }
-  const statusCode = err.statusCode || 500;
-  res.status(statusCode).json({
-    error: err.message || 'Internal Server Error',
-    details: process.env.NODE_ENV === 'development' ? err.stack : undefined
-  });
+  console.error('🆘 Server Error:', err.stack || err.message);
+  if (res.headersSent) return next(err);
+  res.status(err.statusCode || 500).json({ error: err.message });
 });
 
-
-// --- 5. Server Start and Backup Scheduler ---
+// Scheduled Backup
 cron.schedule('0 2 * * *', () => {
-    console.log('🕒 Running daily backup job...');
-    exec('node backup.js', (error, stdout, stderr) => {
-      if (error) { console.error(`❌ Backup failed: ${error.message}`); return; }
-      if (stderr) { console.error(`❌ Backup stderr: ${stderr}`); return; }
-      console.log(`💡 Backup script output: ${stdout.trim()}`);
-    });
-  }, { scheduled: true, timezone: "Asia/Kolkata" });
+  console.log('🕒 Running backup job...');
+  exec('node backup.js', (err, stdout, stderr) => {
+    if (err) console.error(`❌ Backup failed: ${err.message}`);
+    if (stderr) console.error(`stderr: ${stderr}`);
+    if (stdout) console.log(`✅ Backup Output: ${stdout.trim()}`);
+  });
+}, { scheduled: true, timezone: "Asia/Kolkata" });
 
+// Start Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Server running at http://localhost:${PORT}`);
-    console.log('🕒 Daily backup scheduled for 2:00 AM.');
-    db.get("SELECT 1", (err) => {
-        if (err) { console.error("❌ SQLite test query failed: " + err.message); }
-        else { console.log("✅ SQLite DB connection OK."); }
-    });
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
+  console.log('🕒 Backup scheduled at 2:00 AM');
+  db.get("SELECT 1", (err) => {
+    if (err) console.error("❌ DB Connection Failed:", err.message);
+    else console.log("✅ DB Connection OK");
+  });
 });

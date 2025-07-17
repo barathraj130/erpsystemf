@@ -23,6 +23,74 @@ function convertToCsv(data, headers) {
     return [headerRow, ...dataRows].join('\n');
 }
 
+// ----- NEW SELF-HEALING HELPER FUNCTION -----
+// This function seeds the chart of accounts for a company if it's missing.
+function seedChartOfAccountsIfNeeded(companyId, callback) {
+    const groups = [
+        { name: 'Primary', children: [
+            { name: 'Current Assets', nature: 'Asset', children: [
+                { name: 'Cash-in-Hand', nature: 'Asset' }, { name: 'Bank Accounts', nature: 'Asset' },
+                { name: 'Sundry Debtors', nature: 'Asset' }, { name: 'Stock-in-Hand', nature: 'Asset' },
+            ]},
+            { name: 'Fixed Assets', nature: 'Asset' },
+            { name: 'Current Liabilities', nature: 'Liability', children: [
+                { name: 'Sundry Creditors', nature: 'Liability' }, { name: 'Duties & Taxes', nature: 'Liability' }
+            ]},
+            { name: 'Loans (Liability)', nature: 'Liability' }, { name: 'Direct Incomes', nature: 'Income' },
+            { name: 'Indirect Incomes', nature: 'Income' }, { name: 'Sales Accounts', nature: 'Income' },
+            { name: 'Direct Expenses', nature: 'Expense' }, { name: 'Indirect Expenses', nature: 'Expense' },
+            { name: 'Purchase Accounts', nature: 'Expense' }
+        ]}
+    ];
+    const ledgers = [
+        { name: 'Profit & Loss A/c', is_default: 1, groupName: null }, { name: 'Cash', groupName: 'Cash-in-Hand', is_default: 1 },
+        { name: 'Sales', groupName: 'Sales Accounts', is_default: 1 }, { name: 'Purchase', groupName: 'Purchase Accounts', is_default: 1 },
+        { name: 'CGST', groupName: 'Duties & Taxes', is_default: 1 }, { name: 'SGST', groupName: 'Duties & Taxes', is_default: 1 },
+        { name: 'IGST', groupName: 'Duties & Taxes', is_default: 1 },
+    ];
+    
+    db.get("SELECT id FROM ledger_groups WHERE company_id = ? AND name = 'Sundry Debtors'", [companyId], (err, groupRow) => {
+        if (err) return callback(err);
+        if (groupRow) return callback(null); // Already seeded, continue
+
+        console.warn(`[Self-Healing] Chart of accounts for company ${companyId} is missing. Seeding now...`);
+        db.serialize(() => {
+            const groupMap = new Map();
+            function insertGroups(groupList, parentId = null, onComplete) {
+                let pending = groupList.length;
+                if (pending === 0) return onComplete();
+                groupList.forEach(group => {
+                    db.run('INSERT OR IGNORE INTO ledger_groups (company_id, name, parent_id, nature, is_default) VALUES (?, ?, ?, ?, ?)', 
+                    [companyId, group.name, parentId, group.nature, group.is_default || 0], function(err) {
+                        if (err) console.error(`[Seed] Error inserting group ${group.name}:`, err.message);
+                        db.get('SELECT id FROM ledger_groups WHERE company_id = ? AND name = ?', [companyId, group.name], (e, r) => {
+                            if(r) groupMap.set(group.name, r.id);
+                            if (group.children) {
+                                insertGroups(group.children, r ? r.id : null, () => { if (--pending === 0) onComplete(); });
+                            } else {
+                                if (--pending === 0) onComplete();
+                            }
+                        });
+                    });
+                });
+            }
+            insertGroups(groups[0].children, null, () => {
+                let ledgersPending = ledgers.length;
+                if (ledgersPending === 0) return callback(null);
+                ledgers.forEach(ledger => {
+                    const groupId = ledger.groupName ? groupMap.get(ledger.groupName) : null;
+                    db.run('INSERT OR IGNORE INTO ledgers (company_id, name, group_id, is_default) VALUES (?, ?, ?, ?)', 
+                    [companyId, ledger.name, groupId, ledger.is_default || 0], (err) => {
+                        if (err) console.error(`[Seed] Error inserting ledger ${ledger.name}:`, err.message);
+                        if (--ledgersPending === 0) callback(null);
+                    });
+                });
+            });
+        });
+    });
+}
+// ----- END OF HELPER FUNCTION -----
+
 // GET /api/users - Get all users (parties) for the active company
 router.get('/', (req, res) => {
     const companyId = req.user.active_company_id;
@@ -64,42 +132,47 @@ router.post('/', (req, res) => {
     const finalEmail = (email && email.trim() !== '') ? email.trim() : null;
 
     const createUserAndLedger = (hashedPassword = null) => {
-        // NOTE: The self-healing chart of accounts check has been removed.
-        // This is correctly handled by db.js on server startup.
-        db.serialize(() => {
-            db.run("BEGIN TRANSACTION;");
-            const userSql = `INSERT INTO users (username, password, email, phone, company, initial_balance, role, address_line1, address_line2, city_pincode, state, gstin, state_code, active_company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-            db.run(userSql, [
-                username, hashedPassword, finalEmail, phone, company, parseFloat(initial_balance || 0), role || 'user',
-                address_line1, address_line2, city_pincode, state, gstin, state_code, companyId
-            ], function(userErr) {
-                if (userErr) {
-                    db.run("ROLLBACK;");
-                    return res.status(500).json({ error: "Failed to create party record.", details: userErr.message });
-                }
-                const newUserId = this.lastID;
+        // --- FIX: Run the self-healing check before the transaction ---
+        seedChartOfAccountsIfNeeded(companyId, (seedErr) => {
+            if (seedErr) {
+                return res.status(500).json({ error: "Failed to verify or prepare accounting setup.", details: seedErr.message });
+            }
 
-                db.run(`INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)`, [newUserId, companyId], (linkErr) => {
-                    if (linkErr) {
+            db.serialize(() => {
+                db.run("BEGIN TRANSACTION;");
+                const userSql = `INSERT INTO users (username, password, email, phone, company, initial_balance, role, address_line1, address_line2, city_pincode, state, gstin, state_code, active_company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                db.run(userSql, [
+                    username, hashedPassword, finalEmail, phone, company, parseFloat(initial_balance || 0), role || 'user',
+                    address_line1, address_line2, city_pincode, state, gstin, state_code, companyId
+                ], function(userErr) {
+                    if (userErr) {
                         db.run("ROLLBACK;");
-                        return res.status(500).json({ error: "Failed to link user to company.", details: linkErr.message });
+                        return res.status(500).json({ error: "Failed to create party record.", details: userErr.message });
                     }
-                    
-                    db.get("SELECT id FROM ledger_groups WHERE company_id = ? AND name = 'Sundry Debtors'", [companyId], (groupErr, groupRow) => {
-                        if (groupErr || !groupRow) {
+                    const newUserId = this.lastID;
+
+                    db.run(`INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)`, [newUserId, companyId], (linkErr) => {
+                        if (linkErr) {
                             db.run("ROLLBACK;");
-                            return res.status(500).json({ error: "Critical Error: Accounting group 'Sundry Debtors' not found. Setup may be incomplete." });
+                            return res.status(500).json({ error: "Failed to link user to company.", details: linkErr.message });
                         }
                         
-                        const ledgerSql = `INSERT INTO ledgers (company_id, name, group_id, opening_balance, is_dr, gstin, state) VALUES (?, ?, ?, ?, ?, ?, ?)`;
-                        db.run(ledgerSql, [companyId, username, groupRow.id, initial_balance || 0, (initial_balance || 0) >= 0, gstin, state], (ledgerErr) => {
-                            if (ledgerErr) {
+                        db.get("SELECT id FROM ledger_groups WHERE company_id = ? AND name = 'Sundry Debtors'", [companyId], (groupErr, groupRow) => {
+                            if (groupErr || !groupRow) {
                                 db.run("ROLLBACK;");
-                                return res.status(500).json({ error: "User was created, but failed to create corresponding accounting ledger.", details: ledgerErr.message });
+                                return res.status(500).json({ error: "Critical Error: Accounting group 'Sundry Debtors' not found. Setup may be incomplete." });
                             }
-                            db.run("COMMIT;", (commitErr) => {
-                                if (commitErr) return res.status(500).json({ error: "Failed to commit transaction", details: commitErr.message });
-                                res.status(201).json({ id: newUserId, message: 'Party and Accounting Ledger created successfully.' });
+                            
+                            const ledgerSql = `INSERT INTO ledgers (company_id, name, group_id, opening_balance, is_dr, gstin, state) VALUES (?, ?, ?, ?, ?, ?, ?)`;
+                            db.run(ledgerSql, [companyId, username, groupRow.id, initial_balance || 0, (initial_balance || 0) >= 0, gstin, state], (ledgerErr) => {
+                                if (ledgerErr) {
+                                    db.run("ROLLBACK;");
+                                    return res.status(500).json({ error: "User was created, but failed to create corresponding accounting ledger.", details: ledgerErr.message });
+                                }
+                                db.run("COMMIT;", (commitErr) => {
+                                    if (commitErr) return res.status(500).json({ error: "Failed to commit transaction", details: commitErr.message });
+                                    res.status(201).json({ id: newUserId, message: 'Party and Accounting Ledger created successfully.' });
+                                });
                             });
                         });
                     });

@@ -19,13 +19,16 @@ let productSuppliersCache = [];
 let businessProfileCache = null;
 let unreadNotificationsCache = [];
 
-let isLoadingUsers = false;
-let isLoadingTransactions = false;
-let isLoadingLenders = false;
-let isLoadingBusinessAgreements = false;
-let isLoadingProducts = false;
-let isLoadingInvoices = false;
-let isLoadingBusinessProfile = false;
+// --- FIX: Correctly define the isLoading object ---
+let isLoading = {
+    users: false,
+    transactions: false,
+    lenders: false,
+    businessAgreements: false,
+    products: false,
+    invoices: false,
+    businessProfile: false
+};
 
 
 // For Chart instances - DECLARE THEM GLOBALLY ONCE
@@ -167,7 +170,52 @@ const baseTransactionCategories = [
     { name: "Stock Adjustment (Increase)", group: "inventory_adjustment", isProductPurchase: true, relevantTo: "none", needsPaymentMode: false, defaultSignForParty: 0, categoryPattern: "Stock Adjustment (Increase)", affectsLedgerPattern: "none" },
     { name: "Stock Adjustment (Decrease)", group: "inventory_adjustment", isProductSale: true, relevantTo: "none", needsPaymentMode: false, defaultSignForParty: 0, categoryPattern: "Stock Adjustment (Decrease)", affectsLedgerPattern: "none" },
 ];
+async function openUserModal(user = null) {
+    const modal = document.getElementById("userModal");
+    const form = document.getElementById("userForm");
+    const modalTitle = document.getElementById("userModalTitle");
 
+    if (!modal || !form || !modalTitle) {
+        console.error("User modal, form, or title element not found in DOM!");
+        alert("Error: Cannot open the customer details form.");
+        return;
+    }
+
+    form.reset();
+    editingUserId = null; 
+    modalTitle.textContent = "Add New Customer"; 
+
+    if (user) {
+        editingUserId = user.id;
+        modalTitle.textContent = `Edit Customer: ${user.username}`;
+        
+        document.getElementById("username").value = user.username || "";
+        document.getElementById("email").value = user.email || "";
+        document.getElementById("phone").value = user.phone || "";
+        document.getElementById("company").value = user.company || "";
+        document.getElementById("balance").value = user.initial_balance !== undefined ? user.initial_balance : 0;
+        document.getElementById("address_line1").value = user.address_line1 || "";
+        document.getElementById("address_line2").value = user.address_line2 || "";
+        document.getElementById("city_pincode").value = user.city_pincode || "";
+        document.getElementById("state").value = user.state || "";
+        document.getElementById("gstin").value = user.gstin || "";
+        document.getElementById("state_code").value = user.state_code || "";
+    }
+    
+    modal.classList.add('show');
+}
+
+// In app-script.js
+
+function closeUserModal() {
+    const modal = document.getElementById("userModal");
+    if (modal) {
+        // Use the class to hide the modal
+        modal.classList.remove('show');
+    }
+    // Clear the editing state so the next open is for a "new" user
+    editingUserId = null; 
+}
 async function apiFetch(endpoint, options = {}) {
     const token = localStorage.getItem('erp-token');
     const headers = {
@@ -208,10 +256,11 @@ document.addEventListener("DOMContentLoaded", () => {
     // If we ARE on an auth page, no further action is needed here.
     // The script in login.html will handle the form submission.
 });
-
 async function initializeApp() {
     try {
-        const res = await apiFetch(`${API}/auth/me`);
+        // CORRECTED: The API endpoint now matches the one defined in server.js
+        const res = await apiFetch(`${API}/jwt-auth/me`);
+
         if (!res || !res.ok) {
             // This happens if the token is present but invalid (e.g., expired, tampered).
             throw new Error('Session is invalid or expired. Please log in again.');
@@ -231,7 +280,6 @@ async function initializeApp() {
         logout(); // The token was bad, so clear it and redirect to login.
     }
 }
-
 function updateHeaderProfile(user) {
     if (!user) return;
     const userNameEl = document.querySelector('.user-profile .user-name');
@@ -288,9 +336,9 @@ async function loadInitialData() {
 }
 
 async function loadBusinessProfile() {
-    if (isLoadingBusinessProfile && businessProfileCache)
+    if (isLoading.businessProfile && businessProfileCache)
         return businessProfileCache;
-    isLoadingBusinessProfile = true;
+    isLoading.businessProfile = true;
     try {
         const res = await apiFetch(`${API}/invoices/config/business-profile`);
         if (!res || !res.ok) {
@@ -314,7 +362,7 @@ async function loadBusinessProfile() {
         businessProfileCache = getDefaultBusinessProfile();
         return businessProfileCache;
     } finally {
-        isLoadingBusinessProfile = false;
+        isLoading.businessProfile = false;
     }
 }
 
@@ -335,42 +383,66 @@ function getDefaultBusinessProfile() {
         logo_url: "",
     };
 }
-
 function setupEventListeners() {
+    // --- START: CORRECTED SIDEBAR LOGIC ---
+    const menuToggle = document.getElementById('menuToggle');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarCloseBtn = document.getElementById('sidebarCloseBtn');
+    const mainContentWrapper = document.querySelector('.main-content-wrapper');
+
+    const handleSidebarToggle = () => {
+        sidebar.classList.toggle('open');
+        // On desktop, adjust the main content margin when toggling
+        if (window.innerWidth > 992) {
+            mainContentWrapper.classList.toggle('sidebar-collapsed', !sidebar.classList.contains('open'));
+        }
+    };
+
+    const handleResize = () => {
+        if (window.innerWidth > 992) {
+            // Desktop: Ensure sidebar is open and content has correct margin
+            sidebar.classList.add('open');
+            mainContentWrapper.classList.remove('sidebar-collapsed');
+        } else {
+            // Mobile: Ensure sidebar is closed and content takes full width
+            sidebar.classList.remove('open');
+            mainContentWrapper.classList.add('sidebar-collapsed');
+        }
+    };
+
+    if (menuToggle && sidebar && mainContentWrapper) {
+        menuToggle.addEventListener('click', handleSidebarToggle);
+    }
+    if (sidebarCloseBtn && sidebar) {
+        sidebarCloseBtn.addEventListener('click', () => sidebar.classList.remove('open'));
+    }
+    
+    // Set initial state on load and on resize
+    window.addEventListener('resize', handleResize);
+    handleResize(); // Call once on initial load
+    // --- END: CORRECTED SIDEBAR LOGIC ---
+
     const companyExpenseForm = document.getElementById("companyExpenseForm");
     if(companyExpenseForm) companyExpenseForm.addEventListener('submit', handleCompanyExpenseSubmit);
 
     document.getElementById("loanFundsReceiptForm").addEventListener('submit', handleLoanFundsReceiptSubmit);
-    document
-        .getElementById("userForm")
-        .addEventListener("submit", handleUserSubmit);
-        document.getElementById('openingBalanceForm').addEventListener('submit', handleOpeningBalanceSubmit);
-    document
-        .getElementById("transactionForm")
-        .addEventListener("submit", handleTransactionSubmit);
-    document
-        .getElementById("lenderForm")
-        .addEventListener("submit", handleLenderSubmit);
-    document
-        .getElementById("businessChitLoanAgreementForm")
-        .addEventListener("submit", handleBusinessChitLoanAgreementSubmit);
-    document
-        .getElementById("productForm")
-        .addEventListener("submit", handleProductSubmit);
-    document
-        .getElementById("invoiceForm")
-        .addEventListener("submit", handleInvoiceSubmit);
-    document
-        .getElementById("productSupplierLinkForm")
-        .addEventListener("submit", handleProductSupplierLinkSubmit);
+    document.getElementById("userForm").addEventListener("submit", handleUserSubmit);
+    document.getElementById('openingBalanceForm').addEventListener('submit', handleOpeningBalanceSubmit);
+    document.getElementById("transactionForm").addEventListener("submit", handleTransactionSubmit);
+    document.getElementById("lenderForm").addEventListener("submit", handleLenderSubmit);
+    document.getElementById("businessChitLoanAgreementForm").addEventListener("submit", handleBusinessChitLoanAgreementSubmit);
+    document.getElementById("productForm").addEventListener("submit", handleProductSubmit);
+    document.getElementById("invoiceForm").addEventListener("submit", handleInvoiceSubmit);
+    document.getElementById("productSupplierLinkForm").addEventListener("submit", handleProductSupplierLinkSubmit);
     document.getElementById('repayLoanForm').addEventListener('submit', handleLoanRepaymentSubmit);
-    document.getElementById("loanFundsReceiptForm").addEventListener('submit', handleLoanFundsReceiptSubmit);
-    document
-        .getElementById("userForm")
-        .addEventListener("submit", handleUserSubmit);
-    const userTxHistoryFilter = document.getElementById(
-        "userTxHistoryCategoryFilter",
-    );
+    
+    const customerBalanceForm = document.getElementById('customerBalanceForm');
+    if(customerBalanceForm) customerBalanceForm.addEventListener('submit', handleCustomerBalanceSubmit);
+    
+    const existingLoanForm = document.getElementById('existingLoanForm');
+    if(existingLoanForm) existingLoanForm.addEventListener('submit', handleExistingLoanSubmit);
+    
+    const userTxHistoryFilter = document.getElementById("userTxHistoryCategoryFilter");
     if (userTxHistoryFilter) {
         userTxHistoryFilter.addEventListener("change", (e) => {
             const userId = e.target.dataset.userId;
@@ -443,6 +515,19 @@ function setupEventListeners() {
             populateCustomerDetailsForInvoice,
         );
     }
+    
+    // START: ADD THIS NEW BLOCK FOR INVOICE PAYMENT METHOD
+    const invPaymentInput = document.getElementById("inv_payment_being_made_now");
+    if (invPaymentInput) {
+        invPaymentInput.addEventListener('input', () => {
+            const amount = parseFloat(invPaymentInput.value) || 0;
+            const paymentMethodGroup = document.getElementById("inv_payment_method_group");
+            if (paymentMethodGroup) {
+                paymentMethodGroup.style.display = (amount !== 0) ? 'block' : 'none';
+            }
+        });
+    }
+    // END: ADD THIS NEW BLOCK FOR INVOICE PAYMENT METHOD
 
     const txPartyTypeCustomerRadio = document.getElementById(
         "txPartyTypeCustomer",
@@ -499,44 +584,6 @@ function setupEventListeners() {
             }
         });
     }
-
-
-    // Sidebar Toggle
-    const menuToggle = document.getElementById('menuToggle');
-    const sidebar = document.getElementById('sidebar');
-    const sidebarCloseBtn = document.getElementById('sidebarCloseBtn');
-    const mainContentWrapper = document.querySelector('.main-content-wrapper');
-
-    if (menuToggle && sidebar && mainContentWrapper) {
-        menuToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('open');
-            if (window.innerWidth > 992) { 
-                 mainContentWrapper.classList.toggle('sidebar-collapsed', !sidebar.classList.contains('open'));
-            }
-        });
-    }
-     if (sidebarCloseBtn && sidebar && mainContentWrapper) {
-        sidebarCloseBtn.addEventListener('click', () => {
-            sidebar.classList.remove('open');
-             if (window.innerWidth > 992) {
-                mainContentWrapper.classList.add('sidebar-collapsed');
-            }
-        });
-    }
-    if (window.innerWidth <= 992) {
-        sidebar.classList.remove('open');
-    } else {
-        sidebar.classList.add('open');
-        mainContentWrapper.classList.remove('sidebar-collapsed');
-    }
-    window.addEventListener('resize', () => {
-        if (window.innerWidth > 992) {
-            sidebar.classList.add('open'); 
-            mainContentWrapper.classList.remove('sidebar-collapsed');
-        } else {
-            sidebar.classList.remove('open'); 
-        }
-    });
     
     const headerAddButton = document.getElementById('headerAddButton');
     const addNewDropdown = document.getElementById('addNewDropdown');
@@ -551,8 +598,7 @@ function setupEventListeners() {
             }
         });
     }
-} 
-// --- ADD THESE NEW FUNCTIONS TO SCRIPT.JS ---
+}//ADD THESE NEW FUNCTIONS TO SCRIPT.JS ---
 
 async function loadNotifications() {
     try {
@@ -917,7 +963,7 @@ function updateDashboardCards() {
 }
 async function populateUserDropdown() {
     try {
-        if (!Array.isArray(usersDataCache) || (usersDataCache.length === 0 && !isLoadingUsers)) {
+        if (!Array.isArray(usersDataCache) || (usersDataCache.length === 0 && !isLoading.users)) {
             await loadUsers();
         }
         
@@ -975,7 +1021,7 @@ async function populateLenderDropdownForTxModal() {
         let entitiesToUse = externalEntitiesCache;
         if (
             !Array.isArray(entitiesToUse) ||
-            (entitiesToUse.length === 0 && !isLoadingLenders)
+            (entitiesToUse.length === 0 && !isLoading.lenders)
         ) {
             entitiesToUse = await loadLenders();
         }
@@ -1003,7 +1049,7 @@ async function populateAgreementDropdownForTxModal() {
         let agreementsToUse = businessAgreementsCache;
         if (
             !Array.isArray(agreementsToUse) ||
-            (agreementsToUse.length === 0 && !isLoadingBusinessAgreements)
+            (agreementsToUse.length === 0 && !isLoading.businessAgreements)
         ) {
             agreementsToUse = await loadBusinessExternalFinanceAgreements();
         }
@@ -1023,61 +1069,41 @@ async function populateAgreementDropdownForTxModal() {
             dropdown.innerHTML = '<option value="">Error loading</option>';
     }
 }
-
 async function loadUsers() {
-    if (isLoadingUsers) return usersDataCache;
-    isLoadingUsers = true;
+    if (isLoading.users) return usersDataCache;
+    isLoading.users = true;
     try {
         const res = await apiFetch(`${API}/users`);
-        if (!res || !res.ok) {
-            const errTxt = await res
-                .text()
-                .catch(() => "Could not read error response.");
-            throw new Error(`Users fetch failed: ${res.status} ${errTxt}`);
-        }
-        const data = await res.json();
-        usersDataCache = Array.isArray(data) ? data : [];
-        updateDashboardCards();
+        if (!res || !res.ok) throw new Error('Failed to fetch users');
+        usersDataCache = await res.json();
         return usersDataCache;
     } catch (error) {
         console.error("Error loading users:", error.message);
-        usersDataCache = [];
         return [];
     } finally {
-        isLoadingUsers = false;
+        isLoading.users = false;
     }
 }
-
 async function loadAllTransactions() {
-    if (isLoadingTransactions) return allTransactionsCache;
-    isLoadingTransactions = true;
+    if (isLoading.transactions) return allTransactionsCache;
+    isLoading.transactions = true;
+    const tableBody = document.querySelector("#allTransactionsSection #transactionTable tbody");
+    if(tableBody) tableBody.innerHTML = '<tr><td colspan="7">Loading...</td></tr>';
     try {
         const res = await apiFetch(`${API}/transactions`);
-        if (!res || !res.ok) {
-            const errTxt = await res
-                .text()
-                .catch(() => "Could not read error response.");
-            console.error("Failed to fetch transactions:", res.status, errTxt);
-            throw new Error(
-                `Transactions fetch failed: ${res.status} ${errTxt}`,
-            );
-        }
-        const data = await res.json();
-        allTransactionsCache = Array.isArray(data) ? data : [];
-        displayTransactions(allTransactionsCache); 
-        updateDashboardCards();
-        loadRecentActivity(); 
+        if (!res || !res.ok) throw new Error('Failed to fetch transactions');
+        allTransactionsCache = await res.json();
+        displayTransactions(allTransactionsCache);
         return allTransactionsCache;
     } catch (error) {
         console.error("Error loading transactions:", error.message);
-        const tableBody = document.getElementById("transactionTable")?.querySelector("tbody");
-        if (tableBody) tableBody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:red;">Error loading transactions. Check console.</td></tr>';
+        if(tableBody) tableBody.innerHTML = `<tr><td colspan="7" class="text-center text-danger">Error loading transactions. Check console.</td></tr>`;
         return [];
     } finally {
-        isLoadingTransactions = false;
+        isLoading.transactions = false;
     }
 }
-
+// Replace the existing displayTransactions function
 function displayTransactions(transactionsToDisplay) {
     const table = document.getElementById("transactionTable");
     if (!table) {
@@ -1085,16 +1111,30 @@ function displayTransactions(transactionsToDisplay) {
         return;
     }
     const tbody = table.querySelector("tbody") || table;
-    tbody.innerHTML = ""; 
+    tbody.innerHTML = "";
     if (
         !Array.isArray(transactionsToDisplay) ||
         transactionsToDisplay.length === 0
     ) {
         tbody.innerHTML =
             '<tr><td colspan="7" style="text-align:center;">No transactions found.</td></tr>';
-        return; 
+        return;
     }
-    transactionsToDisplay.forEach((tx) => {
+
+    // Correctly sort by date descending, then by ID descending
+    const sortedTransactions = transactionsToDisplay.sort((a, b) => {
+        const dateA = new Date(a.date);
+        const dateB = new Date(b.date);
+        if (dateB - dateA !== 0) {
+            return dateB - dateA;
+        }
+        return b.id - a.id;
+    });
+    
+    // --- FIX: Initialize serial number to total count and decrement ---
+    let serialNumber = sortedTransactions.length;
+
+    sortedTransactions.forEach((tx) => {
         const row = tbody.insertRow();
         let displayName = "N/A (Business)";
         if (tx.user_id) {
@@ -1110,16 +1150,48 @@ function displayTransactions(transactionsToDisplay) {
         }
 
         const ledgerAmount = parseFloat(tx.amount);
+        const catInfo = transactionCategories.find(c => c.name === tx.category);
+
+        let amountClass = '';
+        let displayAmount = Math.abs(ledgerAmount);
+
+        if (catInfo) {
+            if (catInfo.type.includes('income') && !catInfo.type.includes('liability')) {
+                amountClass = 'positive';
+            } 
+            else if (catInfo.type.includes('income') && catInfo.type.includes('liability')) {
+                amountClass = 'info'; 
+            }
+            else if (catInfo.type.includes('expense')) {
+                amountClass = 'negative';
+            }
+            else if (catInfo.type === 'receivable_increase') {
+                amountClass = 'receivable'; 
+            }
+            else if (catInfo.type === 'payable_increase') {
+                amountClass = 'negative'; 
+            }
+            else {
+                amountClass = ledgerAmount >= 0 ? 'positive' : 'negative';
+            }
+        } else {
+            amountClass = ledgerAmount >= 0 ? 'positive' : 'negative';
+        }
         
+        const txDate = new Date(tx.date + 'T00:00:00');
+        const formattedDate = `${String(txDate.getDate()).padStart(2, '0')}-${txDate.toLocaleString('default', { month: 'short' })}-${txDate.getFullYear()}`;
+
         row.innerHTML = `
-        <td>${tx.id}</td><td>${displayName}</td>
-        <td class="${ledgerAmount >= 0 ? "positive" : "negative"}">₹${ledgerAmount.toFixed(2)}</td> 
-        <td>${tx.description || "-"}</td><td>${tx.category || "-"}</td>
-        <td>${new Date(tx.date).toLocaleDateString()}</td>
-        <td>
-          <button class='btn btn-info btn-sm' onclick='openTransactionModal(${JSON.stringify(tx)})'><i class="fas fa-edit"></i></button>
-          <button class='btn btn-danger btn-sm' onclick='deleteTransaction(${tx.id})'><i class="fas fa-trash"></i></button>
-        </td>`;
+            <td>${serialNumber--}</td>
+            <td>${displayName}</td>
+            <td class="num ${amountClass}">₹${displayAmount.toFixed(2)}</td>
+            <td>${tx.description || "-"}</td>
+            <td>${tx.category || "-"}</td>
+            <td>${formattedDate}</td>
+            <td>
+              <button class='btn btn-info btn-sm' onclick='openTransactionModal(${JSON.stringify(tx)})'><i class="fas fa-edit"></i></button>
+              <button class='btn btn-danger btn-sm' onclick='deleteTransaction(${tx.id})'><i class="fas fa-trash"></i></button>
+            </td>`;
     });
 }
 function showLedger(type) {
@@ -1143,7 +1215,6 @@ function showLedger(type) {
         loadBankLedger();
     }
 }
-
 async function loadCashLedger(date = null) {
     const selectedDate =
         date ||
@@ -1163,9 +1234,9 @@ async function loadCashLedger(date = null) {
     tfoot.innerHTML = "";
 
     try {
-        if(usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
-        if(allTransactionsCache.length === 0 && !isLoadingTransactions) await loadAllTransactions();
-        if(externalEntitiesCache.length === 0 && !isLoadingLenders) await loadLenders();
+        if(usersDataCache.length === 0 && !isLoading.users) await loadUsers();
+        if(allTransactionsCache.length === 0 && !isLoading.transactions) await loadAllTransactions();
+        if(externalEntitiesCache.length === 0 && !isLoading.lenders) await loadLenders();
 
         let openingCashBalance = 0;
         allTransactionsCache
@@ -1174,23 +1245,21 @@ async function loadCashLedger(date = null) {
                 const catInfo = transactionCategories.find( 
                     (c) => c.name === t.category,
                 );
-                if (!catInfo || !catInfo.affectsLedger) return;
+                if (!catInfo || !catInfo.affectsLedger || !catInfo.affectsLedger.includes("cash")) return;
                 
                 let actualCashFlow = 0;
-                if (catInfo.affectsLedger === 'cash') {
-                    if (catInfo.type.includes("income")) {
-                        actualCashFlow = Math.abs(parseFloat(t.amount));
-                    } else if (catInfo.type.includes("expense")) {
-                        actualCashFlow = -Math.abs(parseFloat(t.amount));
-                    }
-                } else if (catInfo.affectsLedger === 'both_cash_out_bank_in') { 
-                    actualCashFlow = -Math.abs(parseFloat(t.amount));
-                } else if (catInfo.affectsLedger === 'both_cash_in_bank_out') { 
-                    actualCashFlow = Math.abs(parseFloat(t.amount));
+                if (catInfo.type.includes("income")) {
+                    actualCashFlow = Math.abs(parseFloat(t.amount || 0));
+                } else if (catInfo.type.includes("expense")) {
+                    actualCashFlow = -Math.abs(parseFloat(t.amount || 0));
+                } else if (catInfo.name === 'Cash Withdrawn from Bank') {
+                    actualCashFlow = Math.abs(parseFloat(t.amount || 0));
+                } else if (catInfo.name === 'Cash Deposited to Bank') {
+                    actualCashFlow = -Math.abs(parseFloat(t.amount || 0));
                 }
                 openingCashBalance += actualCashFlow;
             });
-
+        
         const entries = allTransactionsCache
             .filter((t) => {
                 const catInfo = transactionCategories.find( 
@@ -1200,15 +1269,16 @@ async function loadCashLedger(date = null) {
                     t.date === selectedDate &&
                     catInfo &&
                     catInfo.affectsLedger &&
-                    (catInfo.affectsLedger === 'cash' ||
-                        catInfo.affectsLedger.startsWith("both_cash"))
+                    catInfo.affectsLedger.includes("cash")
                 );
             })
             .sort((a, b) => a.id - b.id);
 
+
         tbody.innerHTML = "";
         const openingRow = tbody.insertRow();
-        openingRow.innerHTML = `<td>${new Date(selectedDate).toLocaleDateString()}</td><td colspan="3">Opening Cash Balance</td><td></td><td></td><td class="${openingCashBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${openingCashBalance.toFixed(2)}</td>`;
+        openingRow.innerHTML = `<td>${formatLedgerDate(selectedDate)}</td><td colspan="3">Opening Cash Balance</td><td></td><td></td><td class="num ${openingCashBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${openingCashBalance.toFixed(2)}</td>`;
+
 
         let runningCashBalance = openingCashBalance;
         let dailyTotalDebits = 0; 
@@ -1226,16 +1296,14 @@ async function loadCashLedger(date = null) {
                 let credit = ""; 
                 let actualCashFlowForEntry = 0;
 
-                if (catInfo.affectsLedger === 'cash') {
-                     if (catInfo.type.includes("income")) {
-                        actualCashFlowForEntry = Math.abs(parseFloat(entry.amount));
-                     } else if (catInfo.type.includes("expense")) {
-                        actualCashFlowForEntry = -Math.abs(parseFloat(entry.amount));
-                     }
-                } else if (catInfo.affectsLedger === 'both_cash_in_bank_out') { 
-                     actualCashFlowForEntry = Math.abs(parseFloat(entry.amount));
-                } else if (catInfo.affectsLedger === 'both_cash_out_bank_in') { 
-                    actualCashFlowForEntry = -Math.abs(parseFloat(entry.amount));
+                if (catInfo.type.includes("income")) {
+                     actualCashFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
+                } else if (catInfo.type.includes("expense")) {
+                    actualCashFlowForEntry = -Math.abs(parseFloat(entry.amount || 0));
+                } else if (catInfo.name === 'Cash Withdrawn from Bank') { 
+                     actualCashFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
+                } else if (catInfo.name === 'Cash Deposited to Bank') { 
+                    actualCashFlowForEntry = -Math.abs(parseFloat(entry.amount || 0));
                 }
                 
                 if(actualCashFlowForEntry > 0) {
@@ -1259,18 +1327,17 @@ async function loadCashLedger(date = null) {
                 }
 
                 const row = tbody.insertRow();
-                row.innerHTML = `<td>${new Date(entry.date).toLocaleDateString()}</td><td>${displayName}</td><td>${entry.description || "-"}</td><td>${entry.category || "-"}</td><td class="positive">${debit ? "₹" + debit : ""}</td><td class="negative">${credit ? "₹" + credit : ""}</td><td class="${runningCashBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${runningCashBalance.toFixed(2)}</td>`;
+                row.innerHTML = `<td>${formatLedgerDate(entry.date)}</td><td>${displayName}</td><td>${entry.description || "-"}</td><td>${entry.category || "-"}</td><td class="num positive">${debit ? "₹" + debit : ""}</td><td class="num negative">${credit ? "₹" + credit : ""}</td><td class="num ${runningCashBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${runningCashBalance.toFixed(2)}</td>`;
             });
         }
         const dailyNetChange = dailyTotalDebits - dailyTotalCredits;
-        tfoot.innerHTML = `<tr><td colspan="7" style="padding-top:10px; border-top: 1px solid #ccc;"></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Totals for Day:</strong></td><td class="positive"><strong>₹${dailyTotalDebits.toFixed(2)}</strong></td><td class="negative"><strong>₹${dailyTotalCredits.toFixed(2)}</strong></td><td></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Net Cash Flow for Day:</strong></td><td colspan="2" class="${dailyNetChange >= 0 ? "positive" : "negative"}" style="text-align:center;"><strong>₹${dailyNetChange.toFixed(2)}</strong></td><td></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Closing Cash Balance:</strong></td><td colspan="2" class="${runningCashBalance >= 0 ? "positive-balance" : "negative-balance"}" style="text-align:center;"><strong>₹${runningCashBalance.toFixed(2)}</strong></td><td></td></tr>`;
+        tfoot.innerHTML = `<tr><td colspan="7" style="padding-top:10px; border-top: 1px solid #ccc;"></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Totals for Day:</strong></td><td class="positive"><strong>₹${dailyTotalDebits.toFixed(2)}</strong></td><td class="negative"><strong>₹${dailyTotalCredits.toFixed(2)}</strong></td><td></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Net Cash Flow for Day:</strong></td><td colspan="2" class="num ${dailyNetChange >= 0 ? "positive" : "negative"}" style="text-align:center;"><strong>₹${dailyNetChange.toFixed(2)}</strong></td><td></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Closing Cash Balance:</strong></td><td colspan="2" class="num ${runningCashBalance >= 0 ? "positive-balance" : "negative-balance"}" style="text-align:center;"><strong>₹${runningCashBalance.toFixed(2)}</strong></td><td></td></tr>`;
     } catch (error) {
         console.error("Failed to load cash ledger:", error);
         if(tbody)
             tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Error: ${error.message}</td></tr>`;
     }
 }
-
 async function loadBankLedger(date = null) {
     const selectedDate =
         date ||
@@ -1290,9 +1357,9 @@ async function loadBankLedger(date = null) {
     tfoot.innerHTML = "";
 
     try {
-        if(usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
-        if(allTransactionsCache.length === 0 && !isLoadingTransactions) await loadAllTransactions();
-        if(externalEntitiesCache.length === 0 && !isLoadingLenders) await loadLenders();
+        if(usersDataCache.length === 0 && !isLoading.users) await loadUsers();
+        if(allTransactionsCache.length === 0 && !isLoading.transactions) await loadAllTransactions();
+        if(externalEntitiesCache.length === 0 && !isLoading.lenders) await loadLenders();
 
         let openingBankBalance = 0;
         allTransactionsCache
@@ -1301,19 +1368,17 @@ async function loadBankLedger(date = null) {
                 const catInfo = transactionCategories.find( 
                     (c) => c.name === t.category,
                 );
-                if (!catInfo || !catInfo.affectsLedger) return;
+                if (!catInfo || !catInfo.affectsLedger || !catInfo.affectsLedger.includes("bank")) return;
 
                 let actualBankFlow = 0;
-                if (catInfo.affectsLedger === 'bank') {
-                    if (catInfo.type.includes("income")) {
-                         actualBankFlow = Math.abs(parseFloat(t.amount));
-                    } else if (catInfo.type.includes("expense")) {
-                        actualBankFlow = -Math.abs(parseFloat(t.amount));
-                    }
-                } else if (catInfo.affectsLedger === 'both_cash_out_bank_in') { 
-                    actualBankFlow = Math.abs(parseFloat(t.amount));
-                } else if (catInfo.affectsLedger === 'both_cash_in_bank_out') { 
-                    actualBankFlow = -Math.abs(parseFloat(t.amount));
+                if (catInfo.type.includes("income")) { 
+                     actualBankFlow = Math.abs(parseFloat(t.amount || 0));
+                } else if (catInfo.type.includes("expense")) {
+                    actualBankFlow = -Math.abs(parseFloat(t.amount || 0));
+                } else if (catInfo.name === 'Cash Deposited to Bank') {
+                    actualBankFlow = Math.abs(parseFloat(t.amount || 0));
+                } else if (catInfo.name === 'Cash Withdrawn from Bank') {
+                    actualBankFlow = -Math.abs(parseFloat(t.amount || 0));
                 }
                 openingBankBalance += actualBankFlow;
             });
@@ -1327,15 +1392,14 @@ async function loadBankLedger(date = null) {
                     t.date === selectedDate &&
                     catInfo &&
                     catInfo.affectsLedger &&
-                    (catInfo.affectsLedger === 'bank' ||
-                        catInfo.affectsLedger.includes("bank")) 
+                    catInfo.affectsLedger.includes("bank")
                 );
             })
             .sort((a, b) => a.id - b.id);
 
         tbody.innerHTML = "";
         const openingRow = tbody.insertRow();
-        openingRow.innerHTML = `<td>${new Date(selectedDate).toLocaleDateString()}</td><td colspan="3">Opening Bank Balance</td><td></td><td></td><td class="${openingBankBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${openingBankBalance.toFixed(2)}</td>`;
+        openingRow.innerHTML = `<td>${formatLedgerDate(selectedDate)}</td><td colspan="3">Opening Bank Balance</td><td></td><td></td><td class="num ${openingBankBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${openingBankBalance.toFixed(2)}</td>`;
 
         let runningBankBalance = openingBankBalance;
         let dailyTotalDebits = 0; 
@@ -1352,17 +1416,15 @@ async function loadBankLedger(date = null) {
                 let debit = ""; 
                 let credit = ""; 
                 let actualBankFlowForEntry = 0;
-
-                if (catInfo.affectsLedger === 'bank') {
-                    if (catInfo.type.includes("income")) {
-                        actualBankFlowForEntry = Math.abs(parseFloat(entry.amount));
-                    } else if (catInfo.type.includes("expense")) {
-                        actualBankFlowForEntry = -Math.abs(parseFloat(entry.amount));
-                    }
-                } else if (catInfo.affectsLedger === 'both_cash_out_bank_in') { 
-                     actualBankFlowForEntry = Math.abs(parseFloat(entry.amount));
-                } else if (catInfo.affectsLedger === 'both_cash_in_bank_out') { 
-                    actualBankFlowForEntry = -Math.abs(parseFloat(entry.amount));
+                
+                if (catInfo.type.includes("income")) {
+                    actualBankFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
+                } else if (catInfo.type.includes("expense")) {
+                    actualBankFlowForEntry = -Math.abs(parseFloat(entry.amount || 0));
+                } else if (catInfo.name === 'Cash Deposited to Bank') { 
+                     actualBankFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
+                } else if (catInfo.name === 'Cash Withdrawn from Bank') { 
+                    actualBankFlowForEntry = -Math.abs(parseFloat(entry.amount || 0));
                 }
 
                 if(actualBankFlowForEntry > 0) {
@@ -1385,17 +1447,18 @@ async function loadBankLedger(date = null) {
                 }
 
                 const row = tbody.insertRow();
-                row.innerHTML = `<td>${new Date(entry.date).toLocaleDateString()}</td><td>${displayName}</td><td>${entry.description || "-"}</td><td>${entry.category || "-"}</td><td class="positive">${debit ? "₹" + debit : ""}</td><td class="negative">${credit ? "₹" + credit : ""}</td><td class="${runningBankBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${runningBankBalance.toFixed(2)}</td>`;
+                row.innerHTML = `<td>${formatLedgerDate(entry.date)}</td><td>${displayName}</td><td>${entry.description || "-"}</td><td>${entry.category || "-"}</td><td class="num positive">${debit ? "₹" + debit : ""}</td><td class="num negative">${credit ? "₹" + credit : ""}</td><td class="num ${runningBankBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${runningBankBalance.toFixed(2)}</td>`;
             });
         }
         const dailyNetChange = dailyTotalDebits - dailyTotalCredits;
-        tfoot.innerHTML = `<tr><td colspan="7" style="padding-top:10px; border-top: 1px solid #ccc;"></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Totals for Day:</strong></td><td class="positive"><strong>₹${dailyTotalDebits.toFixed(2)}</strong></td><td class="negative"><strong>₹${dailyTotalCredits.toFixed(2)}</strong></td><td></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Net Bank Flow for Day:</strong></td><td colspan="2" class="${dailyNetChange >= 0 ? "positive" : "negative"}" style="text-align:center;"><strong>₹${dailyNetChange.toFixed(2)}</strong></td><td></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Closing Bank Balance:</strong></td><td colspan="2" class="${runningBankBalance >= 0 ? "positive-balance" : "negative-balance"}" style="text-align:center;"><strong>₹${runningBankBalance.toFixed(2)}</strong></td><td></td></tr>`;
+        tfoot.innerHTML = `<tr><td colspan="7" style="padding-top:10px; border-top: 1px solid #ccc;"></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Totals for Day:</strong></td><td class="positive"><strong>₹${dailyTotalDebits.toFixed(2)}</strong></td><td class="negative"><strong>₹${dailyTotalCredits.toFixed(2)}</strong></td><td></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Net Bank Flow for Day:</strong></td><td colspan="2" class="num ${dailyNetChange >= 0 ? "positive" : "negative"}" style="text-align:center;"><strong>₹${dailyNetChange.toFixed(2)}</strong></td><td></td></tr><tr><td colspan="4" style="text-align: right;"><strong>Closing Bank Balance:</strong></td><td colspan="2" class="num ${runningBankBalance >= 0 ? "positive-balance" : "negative-balance"}" style="text-align:center;"><strong>₹${runningBankBalance.toFixed(2)}</strong></td><td></td></tr>`;
     } catch (error) {
         console.error("Failed to load bank ledger:", error);
         if(tbody)
             tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Error: ${error.message}</td></tr>`;
     }
 }
+
 function printLedger(tableId, ledgerTitle) {
     const ledgerTable = document.getElementById(tableId)?.cloneNode(true);
     if (!ledgerTable) {
@@ -1413,7 +1476,6 @@ function printLedger(tableId, ledgerTitle) {
     <script>window.onload=()=>{window.print();window.close()}<\/script></body></html>`);
     printWindow.document.close();
 }
-
 async function handleUserSubmit(e) {
     e.preventDefault();
     const data = {
@@ -1435,9 +1497,7 @@ async function handleUserSubmit(e) {
     }
     try {
         const method = editingUserId ? "PUT" : "POST";
-        const endpoint = editingUserId
-            ? `${API}/users/${editingUserId}`
-            : `${API}/users`;
+        const endpoint = editingUserId ? `${API}/users/${editingUserId}` : `${API}/users`;
         const res = await apiFetch(endpoint, {
             method,
             headers: { "Content-Type": "application/json" },
@@ -1446,29 +1506,28 @@ async function handleUserSubmit(e) {
         if(!res) return;
         const result = await res.json();
         if (!res.ok)
-            throw new Error(
-                result.error || `Operation failed: ${res.statusText}`,
-            );
-        alert(
-            result.message ||
-                (editingUserId ? "Customer updated" : "Customer added"),
-        );
+            throw new Error(result.error || `Operation failed: ${res.statusText}`);
+        alert(result.message || (editingUserId ? "Customer updated" : "Customer added"));
         editingUserId = null;
         closeUserModal();
         await loadUsers();
-        if (
-            document.getElementById("customerManagementSection")?.style
-                .display === 'block' ||
-            document.getElementById("businessFinanceSection")?.style.display ===
-                'block'
-        ) {
-            loadCustomerSummaries(); // Reload summaries after user add/edit
+        if (document.getElementById("customerManagementSection")?.style.display === 'block' || document.getElementById("businessFinanceSection")?.style.display === 'block') {
+            loadCustomerSummaries();
         }
     } catch (error) {
         console.error("Error submitting customer form:", error);
         alert("Operation failed: " + error.message);
     }
 }
+
+function formatLedgerDate(dateString) {
+    const date = new Date(dateString + 'T00:00:00'); // Ensure correct date parsing
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+}
+
 
 function openUserModal(user = null) {
     const modal = document.getElementById("userModal");
@@ -1497,20 +1556,15 @@ function openUserModal(user = null) {
         document.getElementById("gstin").value = user.gstin || "";
         document.getElementById("state_code").value = user.state_code || "";
     }
-    modal.style.display = "block";
+    modal.classList.add('show');
 }
 function closeUserModal() {
     const modal = document.getElementById("userModal");
-    if (modal) modal.style.display = "none";
+    if (modal) modal.classList.remove('show');
     editingUserId = null;
 }
-
 async function deleteUser(id) {
-    if (
-        !confirm(
-            "Are you sure? This will delete the customer and set their user_id to NULL in transactions.",
-        )
-    )
+    if (!confirm("Are you sure? This will delete the customer and all associated accounting records. This CANNOT be undone."))
         return;
     try {
         const res = await apiFetch(`${API}/users/${id}`, { method: "DELETE" });
@@ -1521,18 +1575,11 @@ async function deleteUser(id) {
         alert(result.message || "Customer deleted");
         await loadUsers();
         await loadAllTransactions(); 
-        const cashLedgerActive =
-            document.getElementById("cashLedgerContent")?.style.display !==
-            'none';
-        const bankLedgerActive =
-            document.getElementById("bankLedgerContent")?.style.display !==
-            'none';
+        const cashLedgerActive = document.getElementById("cashLedgerContent")?.style.display !== 'none';
+        const bankLedgerActive = document.getElementById("bankLedgerContent")?.style.display !== 'none';
         if (cashLedgerActive) loadCashLedger();
         if (bankLedgerActive) loadBankLedger();
-        if (
-            document.getElementById("customerManagementSection")?.style
-                .display === 'block'
-        )
+        if (document.getElementById("customerManagementSection")?.style.display === 'block')
             loadCustomerSummaries();
         if (document.getElementById("invoiceManagementSection")?.style.display === 'block') {
             loadInvoices(); 
@@ -1545,36 +1592,27 @@ async function deleteUser(id) {
 function toggleTxPartyDropdowns() {
     const userDropdown = document.getElementById("transaction_user_id");
     const lenderDropdown = document.getElementById("transaction_lender_id");
-    const agreementDropdown = document.getElementById(
-        "transaction_agreement_id",
-    );
+    const agreementDropdown = document.getElementById("transaction_agreement_id");
     const forCustomerRadio = document.getElementById("txPartyTypeCustomer");
 
-    if (
-        !userDropdown ||
-        !lenderDropdown ||
-        !agreementDropdown ||
-        !forCustomerRadio
-    ) {
-        console.error(
-            "One or more party type dropdowns/radios are missing in transactionModal!",
-        );
+    if (!userDropdown || !lenderDropdown || !agreementDropdown || !forCustomerRadio) {
+        console.error("One or more party type dropdowns/radios are missing in transactionModal!");
         return;
     }
 
     if (forCustomerRadio.checked) {
         userDropdown.parentElement.style.display = "block";
         lenderDropdown.parentElement.style.display = "none";
-        if(lenderDropdown) lenderDropdown.value = ""; // Ensure value is cleared
-        if(agreementDropdown) {
+        if (lenderDropdown) lenderDropdown.value = "";
+        if (agreementDropdown) {
             agreementDropdown.parentElement.style.display = "none";
             agreementDropdown.value = "";
         }
     } else {
         userDropdown.parentElement.style.display = "none";
-        if(userDropdown) userDropdown.value = "";
+        if (userDropdown) userDropdown.value = "";
         lenderDropdown.parentElement.style.display = "block";
-        if(agreementDropdown) agreementDropdown.parentElement.style.display = "block";
+        if (agreementDropdown) agreementDropdown.parentElement.style.display = "block";
     }
 }
 
@@ -1583,13 +1621,13 @@ function getFullCategoryDetails(baseCategoryName, paymentMode) {
     if (!baseCatInfo) return null;
 
     if (baseCatInfo.needsPaymentMode) {
-        let mode = paymentMode || "On Credit"; 
+        let mode = paymentMode || "On Credit";
         let finalCategoryName = baseCatInfo.categoryPattern.replace("{PaymentMode}", mode);
-        
+
         if (mode === 'On Credit') {
-             finalCategoryName = baseCatInfo.categoryPattern.replace("{PaymentMode}", "On Credit");
+            finalCategoryName = baseCatInfo.categoryPattern.replace("{PaymentMode}", "On Credit");
         } else if (baseCatInfo.group.includes('biz_loan')) {
-             finalCategoryName = baseCatInfo.categoryPattern.replace("{PaymentModeDestination}", `(to ${mode})`).replace("{PaymentMode}", mode);
+            finalCategoryName = baseCatInfo.categoryPattern.replace("{PaymentModeDestination}", `(to ${mode})`).replace("{PaymentMode}", `from ${mode}`);
         }
 
         return {
@@ -1603,55 +1641,42 @@ function getFullCategoryDetails(baseCategoryName, paymentMode) {
         };
     }
 }
+// REPLACE this entire function in app-script.js
 
-async function openTransactionModal(
-    tx = null,
-    preselectUserId = null,
-    isBusinessExternal = false,
-    preselectLenderId = null,
-    preselectAgreementId = null,
-    preselectCategory = null,
-) {
+async function openTransactionModal(tx = null, preselectUserId = null, isBusinessExternal = false, preselectLenderId = null, preselectAgreementId = null, preselectCategory = null, preselectInvoiceId = null) {
     const modal = document.getElementById("transactionModal");
     const form = document.getElementById("transactionForm");
     const modalTitleElement = document.getElementById("transactionModalTitle");
     const userDropdown = document.getElementById("transaction_user_id");
     const lenderDropdown = document.getElementById("transaction_lender_id");
-    const agreementDropdown = document.getElementById(
-        "transaction_agreement_id",
-    );
+    const agreementDropdown = document.getElementById("transaction_agreement_id");
     const amountField = document.getElementById("amount");
-    const categoryDropdown = document.getElementById("category"); // This is now for base categories
+    const categoryDropdown = document.getElementById("category");
     const descriptionField = document.getElementById("description");
     const dateField = document.getElementById("date");
-    const lineItemsSection = document.getElementById(
-        "transactionLineItemsSection",
-    );
+    const lineItemsSection = document.getElementById("transactionLineItemsSection");
     const lineItemsTableBody = document.getElementById("txLineItemsTableBody");
     const forCustomerRadio = document.getElementById("txPartyTypeCustomer");
     const forLenderRadio = document.getElementById("txPartyTypeLender");
     const paymentModeGroup = document.getElementById("paymentModeGroup");
-
     const partySelectionDiv = forCustomerRadio.closest('.form-group.radio-group');
+    const relatedInvoiceIdInput = document.getElementById("related_invoice_id"); // Get the hidden input
 
-    if (
-        !modal || !form || !modalTitleElement || !userDropdown || !lenderDropdown || !agreementDropdown ||
-        !amountField || !categoryDropdown || !descriptionField || !dateField ||
-        !lineItemsSection || !lineItemsTableBody || !forCustomerRadio || !forLenderRadio || !paymentModeGroup || !partySelectionDiv
-    ) {
+    if (!modal || !form || !modalTitleElement || !userDropdown || !lenderDropdown || !agreementDropdown || !amountField || !categoryDropdown || !descriptionField || !dateField || !lineItemsSection || !lineItemsTableBody || !forCustomerRadio || !forLenderRadio || !paymentModeGroup || !partySelectionDiv) {
         console.error("One or more elements in transactionModal are missing!");
         alert("Error: Transaction modal components not found.");
         return;
     }
 
     form.reset();
+    relatedInvoiceIdInput.value = ""; // Reset the hidden field
     if (lineItemsTableBody) lineItemsTableBody.innerHTML = "";
     updateTxGrandTotal();
 
-    if (usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
-    if (externalEntitiesCache.length === 0 && !isLoadingLenders) await loadLenders();
-    if (businessAgreementsCache.length === 0 && !isLoadingBusinessAgreements) await loadBusinessExternalFinanceAgreements();
-    if (productsCache.length === 0 && !isLoadingProducts) await loadProducts();
+    if (usersDataCache.length === 0 && !isLoading.users) await loadUsers();
+    if (externalEntitiesCache.length === 0 && !isLoading.lenders) await loadLenders();
+    if (businessAgreementsCache.length === 0 && !isLoading.businessAgreements) await loadBusinessExternalFinanceAgreements();
+    if (productsCache.length === 0 && !isLoading.products) await loadProducts();
 
     await populateUserDropdown();
     await populateLenderDropdownForTxModal();
@@ -1665,7 +1690,6 @@ async function openTransactionModal(
     newCategoryDropdown.onchange = () => {
         const selectedBaseCategoryName = newCategoryDropdown.value;
         const baseCatInfo = baseTransactionCategories.find(c => c.name === selectedBaseCategoryName);
-        console.log("Base Category Changed. Info:", baseCatInfo);
         
         if (baseCatInfo && baseCatInfo.relevantTo === 'none') {
             partySelectionDiv.style.display = 'none';
@@ -1694,6 +1718,7 @@ async function openTransactionModal(
         if (baseCatInfo && baseCatInfo.needsPaymentMode) document.getElementById("txPayModeCash").checked = true;
         else if (baseCatInfo && !baseCatInfo.needsPaymentMode) document.getElementsByName("txPaymentMode").forEach(radio => radio.checked = false);
     };
+
     if (tx) { // Editing existing transaction
         editingTxnId = tx.id;
         modalTitleElement.textContent = `Edit Transaction #${tx.id}`;
@@ -1703,6 +1728,7 @@ async function openTransactionModal(
         amountField.value = tx.amount !== undefined ? Math.abs(tx.amount) : "";
         descriptionField.value = tx.description || "";
         dateField.value = tx.date ? tx.date.split("T")[0] : new Date().toISOString().split("T")[0];
+        relatedInvoiceIdInput.value = tx.related_invoice_id || ""; // Populate if editing
         
         if(tx.lender_id) forLenderRadio.checked = true;
         else forCustomerRadio.checked = true;
@@ -1713,10 +1739,19 @@ async function openTransactionModal(
 
         for (const bc of baseTransactionCategories) {
             if (bc.needsPaymentMode) {
-                if (originalFullCatFromDB.includes(bc.name) && originalFullCatFromDB.includes("Cash")) { baseNameToSelect = bc.name; paymentModeToSelect = "Cash"; needsModeForEditDisplay = true; break; }
-                if (originalFullCatFromDB.includes(bc.name) && originalFullCatFromDB.includes("Bank")) { baseNameToSelect = bc.name; paymentModeToSelect = "Bank"; needsModeForEditDisplay = true; break; }
-                if (originalFullCatFromDB.includes(bc.name) && (originalFullCatFromDB.includes("On Credit") || originalFullCatFromDB.includes("Credit Note"))) { baseNameToSelect = bc.name; paymentModeToSelect = "On Credit"; needsModeForEditDisplay = true; break; }
-            } else if (originalFullCatFromDB === bc.categoryPattern) { baseNameToSelect = bc.name; break; }
+                const patternNoMode = bc.categoryPattern.replace(" ({PaymentMode})", "").replace(" (from {PaymentMode})", "").replace(" (to {PaymentMode})", "");
+                if (originalFullCatFromDB.startsWith(patternNoMode)) {
+                    baseNameToSelect = bc.name;
+                    needsModeForEditDisplay = true;
+                    if (originalFullCatFromDB.includes("Cash")) paymentModeToSelect = "Cash";
+                    else if (originalFullCatFromDB.includes("Bank")) paymentModeToSelect = "Bank";
+                    else if (originalFullCatFromDB.includes("Credit")) paymentModeToSelect = "On Credit";
+                    break;
+                }
+            } else if (originalFullCatFromDB === bc.categoryPattern) {
+                baseNameToSelect = bc.name;
+                break;
+            }
         }
         
         newCategoryDropdown.value = baseNameToSelect; 
@@ -1740,6 +1775,10 @@ async function openTransactionModal(
         document.getElementById("txPayModeCash").checked = true;
         paymentModeGroup.style.display = 'none'; 
 
+        if (preselectInvoiceId) {
+            relatedInvoiceIdInput.value = preselectInvoiceId; // Populate for new payment
+        }
+
         if (isBusinessExternal) {
             modalTitleElement.textContent = "New Business/External Transaction";
             forLenderRadio.checked = true;
@@ -1760,8 +1799,9 @@ async function openTransactionModal(
         }
     
     }
-    modal.style.display = "block";
+    modal.classList.add('show');
 }
+// REPLACE this entire function in app-script.js
 
 async function handleTransactionSubmit(e) {
     e.preventDefault();
@@ -1770,6 +1810,7 @@ async function handleTransactionSubmit(e) {
     const lenderIdInput = document.getElementById("transaction_lender_id").value;
     const agreementIdInput = document.getElementById("transaction_agreement_id").value;
     const isForCustomer = document.getElementById("txPartyTypeCustomer").checked;
+    const relatedInvoiceId = document.getElementById("related_invoice_id").value || null;
 
     const userId = (isForCustomer && userIdInput && userIdInput !== "") ? parseInt(userIdInput) : null;
     const lenderId = (!isForCustomer && lenderIdInput && lenderIdInput !== "") ? parseInt(lenderIdInput) : null;
@@ -1798,17 +1839,16 @@ async function handleTransactionSubmit(e) {
             return;
         }
     } else if (!baseCatInfo.needsPaymentMode) {
-        paymentMode = baseCatInfo.fixedPaymentMode || "none"; 
+        paymentMode = "none";
     }
     
     const categoryDetails = getFullCategoryDetails(baseCategoryName, paymentMode);
     const fullCategoryName = categoryDetails.fullCategoryName;
 
-    if (!fullCategoryName || (fullCategoryName === baseCategoryName && baseCatInfo.needsPaymentMode && paymentMode !== "On Credit" && !baseCatInfo.fixedPaymentMode)) {
+    if (!fullCategoryName || (fullCategoryName === baseCategoryName && baseCatInfo.needsPaymentMode && paymentMode !== "On Credit")) {
         alert(`Could not determine full category for '${baseCategoryName}' with payment mode '${paymentMode}'. Please check category definitions.`);
         return;
     }
-
 
     let totalAmountInputValue = parseFloat(document.getElementById("amount").value);
     const isProductInvolved = baseCatInfo.isProductSale || baseCatInfo.isProductPurchase;
@@ -1833,10 +1873,7 @@ async function handleTransactionSubmit(e) {
     const transactionDate = document.getElementById("date").value;
     const transactionDescription = document.getElementById("description").value.trim();
 
-    if ( (baseCategoryName !== "Stock Adjustment (Increase)" && baseCategoryName !== "Stock Adjustment (Decrease)") && 
-         (isNaN(totalAmountInputValue) || totalAmountInputValue <= 0) && 
-         !isProductInvolved 
-       ) {
+    if ((baseCategoryName !== "Stock Adjustment (Increase)" && baseCategoryName !== "Stock Adjustment (Decrease)") && (isNaN(totalAmountInputValue) || totalAmountInputValue <= 0) && !isProductInvolved) {
         alert("Amount must be a positive number (unless it's a pure stock quantity adjustment or calculated from line items).");
         return;
     }
@@ -1849,27 +1886,25 @@ async function handleTransactionSubmit(e) {
         finalAmount = Math.abs(finalAmount) * (categoryDetails.defaultSignForParty || 1);
     } else if (lenderId && categoryDetails.relevantTo === 'lender') {
         finalAmount = Math.abs(finalAmount) * (categoryDetails.defaultSignForParty || 1);
-    } else if (categoryDetails.relevantTo === 'none') { 
+    } else if (categoryDetails.relevantTo === 'none') {
         const originalDetailedCategory = transactionCategories.find(tc => tc.name === fullCategoryName);
         if (originalDetailedCategory) {
             if (originalDetailedCategory.type && originalDetailedCategory.type.includes("expense")) finalAmount = -Math.abs(finalAmount);
             else if (originalDetailedCategory.type && originalDetailedCategory.type.includes("income")) finalAmount = Math.abs(finalAmount);
-            
-            if (fullCategoryName === "Cash Deposited to Bank") finalAmount = -Math.abs(finalAmount); 
-            if (fullCategoryName === "Cash Withdrawn from Bank") finalAmount = Math.abs(finalAmount); 
-        } else { 
-             if (categoryDetails.type === "expense") finalAmount = -Math.abs(finalAmount);
-             else if (categoryDetails.type === "income") finalAmount = Math.abs(finalAmount);
+            if (fullCategoryName === "Cash Deposited to Bank") finalAmount = -Math.abs(finalAmount);
+            if (fullCategoryName === "Cash Withdrawn from Bank") finalAmount = Math.abs(finalAmount);
+        } else {
+            if (categoryDetails.type === "expense") finalAmount = -Math.abs(finalAmount);
+            else if (categoryDetails.type === "income") finalAmount = Math.abs(finalAmount);
         }
     }
     
     if (baseCategoryName.includes("Stock Adjustment")) {
-        if (isNaN(totalAmountInputValue) || (totalAmountInputValue === 0 && lineItems.length > 0) ) { 
-             finalAmount = 0; 
+        if (isNaN(totalAmountInputValue) || (totalAmountInputValue === 0 && lineItems.length > 0)) {
+            finalAmount = 0;
         } else if (isNaN(totalAmountInputValue)) {
-             finalAmount = 0;
-        }
-        else finalAmount = totalAmountInputValue; 
+            finalAmount = 0;
+        } else finalAmount = totalAmountInputValue;
     }
 
     const txData = {
@@ -1878,9 +1913,10 @@ async function handleTransactionSubmit(e) {
         agreement_id: agreementId,
         amount: finalAmount,
         description: transactionDescription,
-        category: fullCategoryName, 
+        category: fullCategoryName,
         date: transactionDate,
         line_items: (isProductInvolved && lineItems.length > 0) ? lineItems : undefined,
+        related_invoice_id: relatedInvoiceId ? parseInt(relatedInvoiceId) : null,
     };
     
     try {
@@ -1904,12 +1940,12 @@ async function handleTransactionSubmit(e) {
         editingTxnId = null;
         closeTransactionModal();
         
-        await loadAllTransactions(); 
-        
-        if(txData.line_items && txData.line_items.length > 0) { 
-            await loadProducts(); 
+        await loadAllTransactions();
+        if (txData.line_items && txData.line_items.length > 0) {
+            await loadProducts();
         }
-        await loadUsers(); 
+        await loadUsers();
+        await loadInvoices(); // Refresh invoices to get updated paid_amount
 
         const cashLedgerActive = document.getElementById("cashLedgerContent")?.style.display !== 'none';
         const bankLedgerActive = document.getElementById("bankLedgerContent")?.style.display !== 'none';
@@ -1917,9 +1953,9 @@ async function handleTransactionSubmit(e) {
         if (bankLedgerActive) loadBankLedger();
 
         if (document.getElementById("customerManagementSection")?.style.display === 'block') loadCustomerSummaries();
-        if (document.getElementById("supplierManagementSection")?.style.display === 'block') loadSupplierSummaries(); 
+        if (document.getElementById("supplierManagementSection")?.style.display === 'block') loadSupplierSummaries();
         if (document.getElementById("businessFinanceSection")?.style.display === 'block') loadBusinessExternalFinanceAgreements();
-        if (document.getElementById("inventoryManagementSection")?.style.display === 'block') displayProducts(); 
+        if (document.getElementById("inventoryManagementSection")?.style.display === 'block') displayProducts();
         updateDashboardCards();
 
     } catch (error) {
@@ -1928,11 +1964,10 @@ async function handleTransactionSubmit(e) {
     }
 }
 
-
 function closeTransactionModal() {
     const modal = document.getElementById("transactionModal");
     if (modal) {
-        modal.style.display = "none";
+        modal.classList.remove('show');
     }
     editingTxnId = null;
     const form = document.getElementById("transactionForm");
@@ -1960,8 +1995,6 @@ function closeTransactionModal() {
     const amountLabel = document.querySelector('label[for="amount"]');
     if(amountLabel) amountLabel.textContent = "Amount (₹):";
 }
-
-
 function addTxLineItemRow(itemData = null) {
     const tableBody = document.getElementById("txLineItemsTableBody");
     if (!tableBody || !productsCache) return;
@@ -2049,7 +2082,6 @@ function updateTxLineTotal(row) {
     row.querySelector(".tx-line-item-total").textContent = lineTotal.toFixed(2);
     updateTxGrandTotal();
 }
-
 function updateTxGrandTotal() {
     let grandTotal = 0;
     document.querySelectorAll("#txLineItemsTableBody tr").forEach((row) => {
@@ -2065,9 +2097,8 @@ function updateTxGrandTotal() {
         amountInput.value = grandTotal.toFixed(2);
     }
 }
-
 async function deleteTransaction(id) {
-    if (!confirm("Are you sure?")) return;
+    if (!confirm("Are you sure? This will reverse stock changes (if any) and delete the financial record.")) return;
     try {
         const res = await apiFetch(`${API}/transactions/${id}`, {
             method: "DELETE",
@@ -2113,11 +2144,11 @@ async function deleteTransaction(id) {
         alert(error.message);
     }
 }
-function toggleInitialPayableField(){
+function toggleInitialPayableField() {
     const entityTypeDropdown = document.getElementById("lenderEntityType");
     const initialPayableGroup = document.getElementById("initialPayableGroup");
     if (entityTypeDropdown && initialPayableGroup) {
-        if(entityTypeDropdown.value === 'Supplier') {
+        if (entityTypeDropdown.value === 'Supplier') {
             initialPayableGroup.style.display = "block";
         } else {
             initialPayableGroup.style.display = "none";
@@ -2126,8 +2157,6 @@ function toggleInitialPayableField(){
         }
     }
 }
-
-
 function openLenderModal(lender = null, entityType = "General") {
     const modal = document.getElementById("lenderModal");
     const form = document.getElementById("lenderForm");
@@ -2137,7 +2166,7 @@ function openLenderModal(lender = null, entityType = "General") {
     const lenderIdInput = document.getElementById("lenderId");
 
     if (!modal || !form || !title || !typeDropdown || !initialPayableInput || !lenderIdInput) {
-        console.error("One or more elements in lenderModal are missing from the DOM! Check IDs: lenderModal, lenderForm, lenderModalTitle, lenderEntityType, lenderInitialPayable, lenderId");
+        console.error("One or more elements in lenderModal are missing from the DOM!");
         alert("Error: Lender modal components not found. Please check console.");
         return;
     }
@@ -2155,8 +2184,7 @@ function openLenderModal(lender = null, entityType = "General") {
         document.getElementById("lenderName").value = lender.lender_name || "";
         typeDropdown.value = lender.entity_type || "General";
         initialPayableInput.value = (lender.entity_type === 'Supplier' && lender.initial_payable_balance !== undefined) ? parseFloat(lender.initial_payable_balance).toFixed(2) : "0.00";
-        document.getElementById("lenderContactPerson").value =
-            lender.contact_person || "";
+        document.getElementById("lenderContactPerson").value = lender.contact_person || "";
         document.getElementById("lenderPhone").value = lender.phone || "";
         document.getElementById("lenderEmail").value = lender.email || "";
         document.getElementById("lenderNotes").value = lender.notes || "";
@@ -2164,12 +2192,12 @@ function openLenderModal(lender = null, entityType = "General") {
         title.textContent = `Add New ${entityType === 'Financial' ? 'Financial Entity' : entityType}`;
     }
     toggleInitialPayableField();
-    modal.style.display = "block";
+    modal.classList.add('show');
 }
 function closeLenderModal() {
     const modal = document.getElementById("lenderModal");
     if (modal) {
-        modal.style.display = "none";
+        modal.classList.remove('show');
     }
     editingLenderId = null;
     const form = document.getElementById("lenderForm");
@@ -2183,9 +2211,7 @@ async function handleLenderSubmit(e) {
     const data = {
         lender_name: document.getElementById("lenderName").value.trim(),
         entity_type: entityType,
-        contact_person: document
-            .getElementById("lenderContactPerson")
-            .value.trim(),
+        contact_person: document.getElementById("lenderContactPerson").value.trim(),
         phone: document.getElementById("lenderPhone").value.trim(),
         email: document.getElementById("lenderEmail").value.trim(),
         notes: document.getElementById("lenderNotes").value.trim(),
@@ -2196,39 +2222,27 @@ async function handleLenderSubmit(e) {
         return;
     }
     const method = editingLenderId ? "PUT" : "POST";
-    const endpoint = editingLenderId
-        ? `${API}/external-entities/${editingLenderId}`
-        : `${API}/external-entities`;
+    const endpoint = editingLenderId ? `${API}/lenders/${editingLenderId}` : `${API}/lenders`;
     try {
         const res = await apiFetch(endpoint, {
             method,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(data),
         });
-        if(!res) return;
+        if (!res) return;
         const result = await res.json();
         if (!res.ok)
-            throw new Error(
-                result.error || `Operation failed: ${res.statusText}`,
-            );
-        alert(
-            result.message ||
-                (editingLenderId
-                    ? "External entity updated"
-                    : "External entity created"),
-        );
+            throw new Error(result.error || `Operation failed: ${res.statusText}`);
+        
+        alert(result.message || (editingLenderId ? "External entity updated" : "External entity created"));
+        
         closeLenderModal();
-        await loadLenders(null, true); // Force reload of main externalEntitiesCache
-        if (
-            document.getElementById("supplierManagementSection")?.style
-                .display === 'block'
-        ) {
-            loadSupplierSummaries(); 
+        await loadLenders(null, true);
+        
+        if (document.getElementById("supplierManagementSection")?.style.display === 'block') {
+            loadSupplierSummaries();
         }
-        if (
-            document.getElementById("businessFinanceSection")?.style.display ===
-            'block'
-        ) {
+        if (document.getElementById("businessFinanceSection")?.style.display === 'block') {
             populateAgreementEntityDropdown();
         }
         const linkSupplierDropdown = document.getElementById("linkSupplierId");
@@ -2238,14 +2252,14 @@ async function handleLenderSubmit(e) {
         console.error("Error saving external entity:", error);
         alert("Error: " + error.message);
     }
-} 
+}
 
 async function loadLenders(entityTypeFilter = null, forceReloadAllCache = false) {
-    if(!entityTypeFilter && !isLoadingLenders && externalEntitiesCache.length > 0 && !forceReloadAllCache) return externalEntitiesCache;
+    if(!entityTypeFilter && !isLoading.lenders && externalEntitiesCache.length > 0 && !forceReloadAllCache) return externalEntitiesCache;
 
 
     let specificLoad = !!entityTypeFilter; 
-    if(!specificLoad || forceReloadAllCache) isLoadingLenders = true; 
+    if(!specificLoad || forceReloadAllCache) isLoading.lenders = true; 
 
     const tableBody = document.getElementById("lendersTableBody");
 
@@ -2255,8 +2269,8 @@ async function loadLenders(entityTypeFilter = null, forceReloadAllCache = false)
 
     try {
         const fetchUrl = entityTypeFilter
-            ? `${API}/external-entities?type=${entityTypeFilter}`
-            : `${API}/external-entities`;
+        ? `${API}/lenders?type=${entityTypeFilter}`
+        : `${API}/lenders`;
         const res = await apiFetch(fetchUrl);
         if(!res) return [];
         if (!res.ok)
@@ -2301,48 +2315,37 @@ async function loadLenders(entityTypeFilter = null, forceReloadAllCache = false)
         if(!specificLoad || forceReloadAllCache) externalEntitiesCache = [];
         return [];
     } finally {
-        if(!specificLoad || forceReloadAllCache) isLoadingLenders = false;
+        if(!specificLoad || forceReloadAllCache) isLoading.lenders = false;
     }
 }
-
 async function deleteLender(id) {
-    if (
-        !confirm(
-            "Are you sure you want to delete this external entity? This may affect product-supplier links and business agreements.",
-        )
-    )
+    if (!confirm("Are you sure you want to delete this external entity? This may affect product-supplier links and business agreements."))
         return;
     try {
-        const res = await apiFetch(`${API}/external-entities/${id}`, {
+        const res = await apiFetch(`${API}/lenders/${id}`, {
             method: "DELETE",
         });
-        if(!res) return;
+        if (!res) return;
         const result = await res.json();
         if (!res.ok)
-            throw new Error(
-                result.error || `Failed to delete: ${res.statusText}`,
-            );
+            throw new Error(result.error || `Failed to delete: ${res.statusText}`);
+        
         alert(result.message || "External entity deleted");
-        await loadLenders(null, true); 
-        if (
-            document.getElementById("supplierManagementSection")?.style
-                .display === 'block'
-        ) {
-            loadSupplierSummaries(); 
+        await loadLenders(null, true);
+        
+        if (document.getElementById("supplierManagementSection")?.style.display === 'block') {
+            loadSupplierSummaries();
         }
-        if (
-            document.getElementById("businessFinanceSection")?.style.display ===
-            'block'
-        ) {
-            populateAgreementEntityDropdown(); 
+        if (document.getElementById("businessFinanceSection")?.style.display === 'block') {
+            populateAgreementEntityDropdown();
             loadBusinessExternalFinanceAgreements();
         }
         const linkSupplierDropdown = document.getElementById("linkSupplierId");
-        if(linkSupplierDropdown && document.getElementById("productSupplierLinkModal").style.display === 'block') {
-             populateSuppliersForProductLinkModal(); 
+        if (linkSupplierDropdown && document.getElementById("productSupplierLinkModal").style.display === 'block') {
+            populateSuppliersForProductLinkModal();
         }
-        if(document.getElementById("inventoryManagementSection")?.style.display === 'block') {
-            loadProducts(); 
+        if (document.getElementById("inventoryManagementSection")?.style.display === 'block') {
+            loadProducts();
         }
 
     } catch (error) {
@@ -2361,8 +2364,8 @@ async function loadCustomerSummaries() {
     
     try {
         // Ensure necessary data caches are populated before proceeding
-        if (usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions) await loadAllTransactions();
+        if (usersDataCache.length === 0 && !isLoading.users) await loadUsers();
+        if (allTransactionsCache.length === 0 && !isLoading.transactions) await loadAllTransactions();
         
         customerTableBody.innerHTML = ""; // Clear the loading message
         
@@ -2498,12 +2501,11 @@ async function populateAgreementEntityDropdown() {
     if (!dropdown) return;
     try {
         let entitiesToUse = externalEntitiesCache;
-        if(!Array.isArray(entitiesToUse) || (entitiesToUse.length === 0 && !isLoadingLenders)) {
-            entitiesToUse = await loadLenders(null, true); // Force reload of all external entities if not already cached
+        if (!Array.isArray(entitiesToUse) || (entitiesToUse.length === 0 && !isLoading.lenders)) {
+            entitiesToUse = await loadLenders(null, true);
         }
-        dropdown.innerHTML =
-            '<option value="">Select External Entity...</option>';
-        if(Array.isArray(entitiesToUse)) {
+        dropdown.innerHTML = '<option value="">Select External Entity...</option>';
+        if (Array.isArray(entitiesToUse)) {
             entitiesToUse.forEach((entity) => {
                 const option = document.createElement("option");
                 option.value = entity.id;
@@ -2513,17 +2515,14 @@ async function populateAgreementEntityDropdown() {
         }
     } catch (error) {
         console.error(error);
-        if(dropdown)
-            dropdown.innerHTML =
-                '<option value="">Error loading entities</option>';
+        if (dropdown)
+            dropdown.innerHTML = '<option value="">Error loading entities</option>';
     }
 }
 function openCreateBusinessChitLoanAgreementModal(agreementId = null) {
     const modal = document.getElementById("businessChitLoanAgreementModal");
     const form = document.getElementById("businessChitLoanAgreementForm");
-    const title = document.getElementById(
-        "businessChitLoanAgreementModalTitle",
-    );
+    const title = document.getElementById("businessChitLoanAgreementModalTitle");
     form.reset();
     editingAgreementId = null;
     document.getElementById("agreementId").value = "";
@@ -2536,32 +2535,25 @@ function openCreateBusinessChitLoanAgreementModal(agreementId = null) {
             editingAgreementId = agreement.agreement_id;
             title.textContent = "Edit Business Finance Agreement";
             document.getElementById("agreementId").value = editingAgreementId;
-            document.getElementById("agreement_entity_id").value =
-                agreement.lender_id;
-            document.getElementById("agreement_type").value =
-                agreement.agreement_type;
-            document.getElementById("agreement_total_amount").value =
-                agreement.total_amount;
+            document.getElementById("agreement_entity_id").value = agreement.lender_id;
+            document.getElementById("agreement_type").value = agreement.agreement_type;
+            document.getElementById("agreement_total_amount").value = agreement.total_amount;
             document.getElementById("agreement_interest_rate").value = (agreement.interest_rate !== undefined && agreement.interest_rate !== null) ? agreement.interest_rate : "0";
-            document.getElementById("agreement_start_date").value =
-                agreement.start_date.split("T")[0];
-            document.getElementById("agreement_details").value =
-                agreement.details || "";
+            document.getElementById("agreement_start_date").value = agreement.start_date.split("T")[0];
+            document.getElementById("agreement_details").value = agreement.details || "";
         } else {
-            editingAgreementId = null; 
+            editingAgreementId = null;
             title.textContent = "New Business Finance Agreement";
-            document.getElementById("agreement_start_date").value = new Date()
-                .toISOString()
-                .split("T")[0];
+            document.getElementById("agreement_start_date").value = new Date().toISOString().split("T")[0];
             document.getElementById("agreement_interest_rate").value = "0";
         }
     });
-    modal.style.display = "block";
+    modal.classList.add('show');
 }
 function closeBusinessChitLoanAgreementModal() {
     const modal = document.getElementById("businessChitLoanAgreementModal");
     if (modal) {
-        modal.style.display = "none";
+        modal.classList.remove('show');
     }
     editingAgreementId = null;
     const form = document.getElementById("businessChitLoanAgreementForm");
@@ -2577,13 +2569,12 @@ function openLoanFundsReceiptModal(agreementData) {
     document.getElementById('receipt_date').value = agreementData.start_date;
     document.getElementById('receipt_agreement_type').value = agreementData.agreement_type;
 
-    modal.style.display = "block";
+    modal.classList.add('show');
 }
 function closeLoanFundsReceiptModal() {
     const modal = document.getElementById("loanFundsReceiptModal");
-    if (modal) modal.style.display = "none";
+    if (modal) modal.classList.remove('show');
 }
-
 async function handleLoanFundsReceiptSubmit(e) {
     e.preventDefault();
     
@@ -2592,7 +2583,7 @@ async function handleLoanFundsReceiptSubmit(e) {
     const amount = parseFloat(document.getElementById('receipt_amount').value);
     const date = document.getElementById('receipt_date').value;
     const agreementType = document.getElementById('receipt_agreement_type').value;
-    const receiptMethod = document.querySelector('input[name="receipt_method"]:checked').value; // "Cash" or "Bank"
+    const receiptMethod = document.querySelector('input[name="receipt_method"]:checked').value;
 
     let category = '';
     let description = '';
@@ -2641,20 +2632,21 @@ async function handleLoanFundsReceiptSubmit(e) {
         alert("Error: " + error.message);
     }
 }
+
 async function loadBusinessExternalFinanceAgreements() {
-    if (isLoadingBusinessAgreements) return businessAgreementsCache;
-    isLoadingBusinessAgreements = true;
+    if (isLoading.businessAgreements) return businessAgreementsCache;
+    isLoading.businessAgreements = true;
 
     const tableBody = document.getElementById("businessExternalFinanceTableBody");
     if (!tableBody) {
-        isLoadingBusinessAgreements = false;
+        isLoading.businessAgreements = false;
         return [];
     }
     
     tableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;">Loading business agreements...</td></tr>';
 
     try {
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions) {
+        if (allTransactionsCache.length === 0 && !isLoading.transactions) {
             console.log("[loadBusinessExternalFinanceAgreements] Transaction cache empty, fetching now...");
             await loadAllTransactions();
         }
@@ -2680,34 +2672,46 @@ async function loadBusinessExternalFinanceAgreements() {
         }
         return [];
     } finally {
-        isLoadingBusinessAgreements = false;
+        isLoading.businessAgreements = false;
     }
 }
-
 function displayBusinessExternalFinanceAgreements() {
     const tableBody = document.getElementById("businessExternalFinanceTableBody");
     if (!tableBody) return;
     tableBody.innerHTML = "";
 
     if (!Array.isArray(businessAgreementsCache) || businessAgreementsCache.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;">No agreements found.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="9" style="text-align:center;">No agreements found.</td></tr>';
         return;
     }
     businessAgreementsCache.forEach((agreement) => {
         const row = tableBody.insertRow();
         row.insertCell().textContent = agreement.lender_name;
-        row.insertCell().textContent = agreement.agreement_type.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
-        row.insertCell().textContent = (parseFloat(agreement.total_amount) || 0).toFixed(2);
+
+        const typeCell = row.insertCell();
+        typeCell.textContent = agreement.agreement_type.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+        typeCell.className = 'type-cell';
+
+        const principalCell = row.insertCell();
+        const effectivePrincipal = (parseFloat(agreement.outstanding_principal) || 0) + (parseFloat(agreement.calculated_principal_paid) || 0);
+        principalCell.textContent = effectivePrincipal.toFixed(2);
+        principalCell.className = 'num';
         
         const monthlyRate = parseFloat(agreement.interest_rate) || 0;
-        row.insertCell().textContent = monthlyRate.toFixed(2) + "%";
+        const rateCell = row.insertCell();
+        rateCell.textContent = monthlyRate.toFixed(2) + "%";
+        rateCell.className = 'num';
+        
+        // --- FIX: Add new EMI column ---
+        const emiCell = row.insertCell();
+        emiCell.textContent = agreement.emi_amount ? parseFloat(agreement.emi_amount).toFixed(2) : "N/A";
+        emiCell.className = 'num';
         
         const interestPayableCell = row.insertCell();
         const interest_payable = agreement.interest_payable !== undefined ? parseFloat(agreement.interest_payable) : NaN;
         interestPayableCell.textContent = !isNaN(interest_payable) ? interest_payable.toFixed(2) : "N/A";
         const isAsset = agreement.agreement_type === 'loan_given_by_biz';
         interestPayableCell.className = (interest_payable > 0 && !isAsset) ? "negative-balance num" : ((interest_payable > 0 && isAsset) ? "positive-balance num" : "num");
-
 
         const paidCell = row.insertCell();
         const total_paid = parseFloat(agreement.calculated_principal_paid || 0) + parseFloat(agreement.calculated_interest_paid || 0);
@@ -2720,6 +2724,7 @@ function displayBusinessExternalFinanceAgreements() {
         balanceCell.className = netBalance > 0 ? "negative-balance num" : "positive-balance num";
         
         const actionsCell = row.insertCell();
+        actionsCell.className = 'actions-cell';
 
         const breakdownBtn = document.createElement('button');
         breakdownBtn.className = 'btn btn-sm btn-secondary';
@@ -2736,12 +2741,12 @@ function displayBusinessExternalFinanceAgreements() {
         actionsCell.appendChild(editBtn);
 
         if (agreement.agreement_type === 'loan_taken_by_biz' || agreement.agreement_type === 'loan_given_by_biz') {
-             const buttonText = agreement.agreement_type === 'loan_taken_by_biz' ? 'Repay' : 'Receive Pmt';
-             const buttonIcon = agreement.agreement_type === 'loan_taken_by_biz' ? 'fa-money-bill-wave' : 'fa-hand-holding-usd';
+             const buttonText = agreement.agreement_type === 'loan_given_by_biz' ? 'Receive Pmt.' : 'Repay';
+             const buttonIcon = agreement.agreement_type === 'loan_given_by_biz' ? 'fa-hand-holding-usd' : 'fa-wallet';
              const repayBtn = document.createElement('button');
              repayBtn.className = 'btn btn-sm btn-success';
              repayBtn.title = buttonText;
-             repayBtn.innerHTML = `<i class="fas ${buttonIcon}"></i> ${buttonText}`;
+             repayBtn.innerHTML = `<i class="fas ${buttonIcon}"></i>`; // Text removed for compactness
              repayBtn.onclick = () => openRepayLoanModal(agreement.agreement_id);
              actionsCell.appendChild(repayBtn);
         } else {
@@ -2763,20 +2768,11 @@ function displayBusinessExternalFinanceAgreements() {
 
     if (tableBody.rows.length === 0 && businessAgreementsCache.length > 0) {
         tableBody.innerHTML =
-            '<tr><td colspan="8" style="text-align:center;">No transactions matched agreements.</td></tr>';
-    }
-
-    const tableHeader = document.querySelector("#businessExternalFinanceTable thead tr");
-    if (tableHeader) { 
-        tableHeader.innerHTML = `<th>Provider/Entity Name</th><th>Type</th><th class="num">Principal (₹)</th><th>Interest Rate (% p.m.)</th><th class="num">Interest Payable (₹)</th><th class="num">Total Paid (₹)</th><th class="num">Principal Balance (₹)</th><th>Actions</th>`;
+            '<tr><td colspan="9" style="text-align:center;">No transactions matched agreements.</td></tr>';
     }
 }
 async function deleteBusinessAgreement(agreementId) {
-    if (
-        !confirm(
-            "Are you sure you want to delete this business agreement? This will not delete associated transactions.",
-        )
-    )
+    if (!confirm("Are you sure you want to delete this business agreement? This will not delete associated transactions."))
         return;
     try {
         const res = await apiFetch(`${API}/business-agreements/${agreementId}`, {
@@ -2785,9 +2781,7 @@ async function deleteBusinessAgreement(agreementId) {
         if(!res) return;
         const result = await res.json();
         if (!res.ok)
-            throw new Error(
-                result.error || `Failed to delete: ${res.statusText}`,
-            );
+            throw new Error(result.error || `Failed to delete: ${res.statusText}`);
         alert(result.message || "Business agreement deleted");
         loadBusinessExternalFinanceAgreements();
     } catch (error) {
@@ -2795,7 +2789,6 @@ async function deleteBusinessAgreement(agreementId) {
         alert("Error: " + error.message);
     }
 }
-
 function openTransactionModalForBusinessExternal() {
     openTransactionModal(null, null, true);
 }
@@ -2820,12 +2813,12 @@ function openUserTransactionHistoryModal(
     filterDropdown.dataset.userId = userId;
     filterDropdown.dataset.userName = userName;
     loadUserTransactionHistory(userId, userName, initialFilter);
-    modal.style.display = "block";
+    modal.classList.add('show');
 }
 function closeUserTransactionHistoryModal() {
     const modal = document.getElementById("userTransactionHistoryModal");
     if (modal) {
-        modal.style.display = "none";
+        modal.classList.remove('show');
     }
     currentViewingUserId = null;
     currentViewingUserName = null;
@@ -2845,83 +2838,129 @@ async function loadUserTransactionHistory(
     tableFoot.innerHTML = "";
 
     try {
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions) await loadAllTransactions();
-        if (usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
+        if (allTransactionsCache.length === 0 && !isLoading.transactions) await loadAllTransactions();
+        if (usersDataCache.length === 0 && !isLoading.users) await loadUsers();
+        if (invoicesCache.length === 0 && !isLoading.invoices) await loadInvoices();
 
-        let userTransactions = allTransactionsCache.filter(tx => tx.user_id === userId);
+        const customer = usersDataCache.find(u => u.id === userId);
+        if (!customer) {
+            tableBody.innerHTML = `<tr><td colspan="5" style="text-align:center;">Customer not found.</td></tr>`;
+            return;
+        }
+
+        let allEntries = [...allTransactionsCache.filter(tx => tx.user_id === userId)];
         
-        if (categoryGroupFilter !== 'all') {
-            userTransactions = userTransactions.filter(tx => {
-                const categoryInfo = transactionCategories.find(cat => cat.name === tx.category);
+        // **START OF THE FIX**
+        // Create pseudo-transactions for all payments made on invoices for this user
+        const userInvoicesWithPayments = invoicesCache.filter(inv => inv.customer_id === userId && parseFloat(inv.paid_amount || 0) > 0);
+        
+        userInvoicesWithPayments.forEach(inv => {
+            allEntries.push({
+                // Treat it like a transaction for sorting and display
+                id: `inv-pmt-${inv.id}`, // Unique-ish ID
+                date: inv.invoice_date, // Assume payment date is invoice date for simplicity
+                category: 'Payment Received (Invoice)',
+                description: `Payment for Invoice #${inv.invoice_number}`,
+                amount: -Math.abs(parseFloat(inv.paid_amount)), // Payment reduces customer balance (credit)
+                isInvoicePayment: true, // Custom flag
+            });
+        });
+        // **END OF THE FIX**
+
+        const filteredEntries = categoryGroupFilter === 'all'
+            ? allEntries
+            : allEntries.filter(entry => {
+                // Allow invoice payments to show in the "All" and "Payments" filters
+                if (entry.isInvoicePayment) {
+                    return categoryGroupFilter === 'all' || categoryGroupFilter === 'customer_payment';
+                }
+                const categoryInfo = transactionCategories.find(cat => cat.name === entry.category);
                 if (!categoryInfo || !categoryInfo.group) return false;
                 if (categoryGroupFilter === "customer_loan") return ["customer_loan_out", "customer_loan_in"].includes(categoryInfo.group);
                 if (categoryGroupFilter === "customer_chit") return ["customer_chit_in", "customer_chit_out"].includes(categoryInfo.group);
                 if (categoryGroupFilter === "customer_revenue") return ["customer_revenue", "customer_service"].includes(categoryInfo.group);
                 return categoryInfo.group === categoryGroupFilter;
             });
-        }
         
-        // Sort transactions chronologically (oldest first) to calculate running balance
-        userTransactions.sort((a, b) => new Date(a.date) - new Date(b.date) || a.id - b.id);
+        filteredEntries.sort((a, b) => new Date(a.date) - new Date(b.date) || (a.id||0) - (b.id||0));
         
         tableBody.innerHTML = "";
 
-        if (userTransactions.length === 0) {
-            tableBody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No transactions found for ${userName} with selected filter.</td></tr>`;
-            return;
-        }
-
-        const customer = usersDataCache.find(u => u.id === userId);
-        const firstTransactionDate = userTransactions[0].date;
-
-        // Calculate opening balance
+        const firstTransactionDate = filteredEntries.length > 0 ? filteredEntries[0].date : new Date().toISOString().split('T')[0];
+        
         let openingBalance = parseFloat(customer.initial_balance || 0);
+        
         allTransactionsCache
             .filter(tx => tx.user_id === userId && tx.date < firstTransactionDate)
             .forEach(tx => { openingBalance += parseFloat(tx.amount || 0); });
 
+        // Also add past invoice payments to opening balance
+        invoicesCache
+            .filter(inv => inv.customer_id === userId && inv.invoice_date < firstTransactionDate && parseFloat(inv.paid_amount || 0) > 0)
+            .forEach(inv => { openingBalance -= parseFloat(inv.paid_amount); });
+
         let runningBalance = openingBalance;
         let totalDebits = 0;
         let totalCredits = 0;
+        
+        const openingDate = new Date(firstTransactionDate + 'T00:00:00');
+        const formattedOpeningDate = `${String(openingDate.getDate()).padStart(2, '0')}-${openingDate.toLocaleString('default', { month: 'short' })}-${openingDate.getFullYear()}`;
 
-        // Add Opening Balance row
         const openingRow = tableBody.insertRow();
         openingRow.innerHTML = `
-            <td>${new Date(firstTransactionDate).toLocaleDateString()}</td>
+            <td>${formattedOpeningDate}</td>
             <td><strong>Opening Balance</strong></td>
             <td class="num"></td>
             <td class="num"></td>
             <td class="num ${runningBalance >= 0 ? 'positive-balance' : 'negative-balance'}"><strong>₹${runningBalance.toFixed(2)}</strong></td>
         `;
 
-        userTransactions.forEach((tx) => {
-            const row = tableBody.insertRow();
-            let debit = "";
-            let credit = "";
-            const amount = parseFloat(tx.amount || 0);
+        if (filteredEntries.length === 0) {
+            tableBody.innerHTML += `<tr><td colspan="5" style="text-align:center;">No transactions found for ${userName} with selected filter.</td></tr>`;
+        } else {
+            filteredEntries.forEach((tx) => {
+                const row = tableBody.insertRow();
+                let debit = "";
+                let credit = "";
+                const amount = parseFloat(tx.amount || 0);
 
-            if (amount > 0) {
-                debit = amount.toFixed(2);
-                totalDebits += amount;
-            } else {
-                credit = Math.abs(amount).toFixed(2);
-                totalCredits += Math.abs(amount);
-            }
-            
-            runningBalance += amount;
-            
-            const particulars = `${tx.category || "N/A"}${tx.description ? ` (${tx.description})` : ''}`;
-            
-            row.innerHTML = `
-                <td>${new Date(tx.date).toLocaleDateString()}</td>
-                <td>${particulars}</td>
-                <td class="num positive">${debit ? '₹' + debit : ''}</td>
-                <td class="num negative">${credit ? '₹' + credit : ''}</td>
-                <td class="num ${runningBalance >= 0 ? 'positive-balance' : 'negative-balance'}">₹${runningBalance.toFixed(2)}</td>
-            `;
-        });
+                if (amount > 0) {
+                    debit = amount.toFixed(2);
+                    totalDebits += amount;
+                } else {
+                    credit = Math.abs(amount).toFixed(2);
+                    totalCredits += Math.abs(amount);
+                }
+                
+                runningBalance += amount;
+                
+                let particulars = `${tx.category || "N/A"}`;
+                if (tx.description) particulars += ` (${tx.description})`;
 
-        // Add a closing summary in the tfoot
+                let actionButton = '';
+                if (tx.related_invoice_id && tx.category.toLowerCase().includes('sale to customer')) {
+                    const invoice = invoicesCache.find(inv => inv.id === tx.related_invoice_id);
+                    if (invoice && invoice.status !== 'Paid') {
+                        const balanceDue = (parseFloat(invoice.total_amount) || 0) - (parseFloat(invoice.paid_amount) || 0);
+                        if (balanceDue > 0) {
+                           actionButton = `<button class="btn btn-success btn-sm" style="margin-left:10px;" onclick="openTransactionModal(null, ${userId}, false, null, null, 'Payment Received from Customer', ${tx.related_invoice_id})">Pay Now</button>`;
+                        }
+                    }
+                }
+                
+                const txDate = new Date(tx.date + 'T00:00:00');
+                const formattedTxDate = `${String(txDate.getDate()).padStart(2, '0')}-${txDate.toLocaleString('default', { month: 'short' })}-${txDate.getFullYear()}`;
+
+                row.innerHTML = `
+                    <td>${formattedTxDate}</td>
+                    <td>${particulars} ${actionButton}</td>
+                    <td class="num positive">${debit ? '₹' + debit : ''}</td>
+                    <td class="num negative">${credit ? '₹' + credit : ''}</td>
+                    <td class="num ${runningBalance >= 0 ? 'positive-balance' : 'negative-balance'}">₹${runningBalance.toFixed(2)}</td>
+                `;
+            });
+        }
+
         tableFoot.innerHTML = `
             <tr style="border-top: 2px solid #ccc; font-weight: bold;">
                 <td colspan="2" style="text-align:right;">Total</td>
@@ -2940,7 +2979,6 @@ async function loadUserTransactionHistory(
         if (tableBody) tableBody.innerHTML = `<tr><td colspan="5" style="text-align:center;">Error: ${error.message}</td></tr>`;
     }
 }
-
 function viewBusinessExternalTransactions(entityName, entityType, entityId){
     alert(`Viewing transactions for ${entityType}: ${entityName} (ID: ${entityId}). (Modal/detailed view to be implemented)\nThis currently relies on matching the lender_id in transactions.`);
     const entityTxns = allTransactionsCache.filter(tx => tx.lender_id === entityId);
@@ -2955,8 +2993,8 @@ function viewAgreementTransactions(agreementId, lenderName){ // lenderName here 
     openEntityTransactionHistoryModal(agreementId, `Agreement with ${lenderName}`, 'agreement');
 }
 async function loadProducts() {
-    if (isLoadingProducts) return productsCache;
-    isLoadingProducts = true;
+    if (isLoading.products) return productsCache;
+    isLoading.products = true;
     const tableBody = document.getElementById("productTableBody");
     if (tableBody)
         tableBody.innerHTML =
@@ -2981,7 +3019,7 @@ async function loadProducts() {
         productsCache = [];
         return [];
     } finally {
-        isLoadingProducts = false;
+        isLoading.products = false;
     }
 }
 
@@ -3029,52 +3067,35 @@ async function openProductModal(productIdOrNull = null) {
     const title = document.getElementById("productModalTitle");
     form.reset();
     editingProductId = productIdOrNull;
-    currentLinkingProductId = productIdOrNull; 
+    currentLinkingProductId = productIdOrNull;
     
     document.getElementById("productId").value = productIdOrNull || "";
     document.getElementById("productSuppliersTableBody").innerHTML = "";
-    const linkSupplierBtn = document.querySelector(
-        '#productModal button[onclick="openProductSupplierLinkModal()"]',
-    );
+    const linkSupplierBtn = document.querySelector('#productModal button[onclick="openProductSupplierLinkModal()"]');
 
     if (productIdOrNull) {
         title.textContent = "Edit Product & Manage Suppliers";
-        if(linkSupplierBtn) {
+        if (linkSupplierBtn) {
             linkSupplierBtn.disabled = false;
             linkSupplierBtn.title = "Link a supplier to this product";
-            linkSupplierBtn.classList.remove('btn-disabled'); 
+            linkSupplierBtn.classList.remove('btn-disabled');
         }
         try {
-            const productRes = await apiFetch(
-                `${API}/products/${productIdOrNull}`,
-            );
+            const productRes = await apiFetch(`${API}/products/${productIdOrNull}`);
             if (!productRes || !productRes.ok)
                 throw new Error("Failed to fetch product details.");
             const product = await productRes.json();
 
-            document.getElementById("productName").value =
-                product.product_name || "";
+            document.getElementById("productName").value = product.product_name || "";
             document.getElementById("productSku").value = product.sku || "";
-            document.getElementById("productHsnAcs").value =
-                product.hsn_acs_code || "";
-            document.getElementById("productDescription").value =
-                product.description || "";
-            document.getElementById("productCostPrice").value =
-                product.cost_price !== undefined ? product.cost_price : "";
-            document.getElementById("productSalePrice").value =
-                product.sale_price !== undefined ? product.sale_price : "";
-            document.getElementById("productCurrentStock").value =
-                product.current_stock !== undefined
-                    ? product.current_stock
-                    : "";
-            document.getElementById("productUnitOfMeasure").value =
-                product.unit_of_measure || "pcs";
-            document.getElementById("productLowStockThreshold").value =
-                product.low_stock_threshold !== undefined
-                    ? product.low_stock_threshold
-                    : 0;
-            document.getElementById("productReorderLevel").value =
-                product.reorder_level !== undefined ? product.reorder_level : 0;
+            document.getElementById("productHsnAcs").value = product.hsn_acs_code || "";
+            document.getElementById("productDescription").value = product.description || "";
+            document.getElementById("productCostPrice").value = product.cost_price !== undefined ? product.cost_price : "";
+            document.getElementById("productSalePrice").value = product.sale_price !== undefined ? product.sale_price : "";
+            document.getElementById("productCurrentStock").value = product.current_stock !== undefined ? product.current_stock : "";
+            document.getElementById("productUnitOfMeasure").value = product.unit_of_measure || "pcs";
+            document.getElementById("productLowStockThreshold").value = product.low_stock_threshold !== undefined ? product.low_stock_threshold : 0;
+            document.getElementById("productReorderLevel").value = product.reorder_level !== undefined ? product.reorder_level : 0;
 
             productSuppliersCache = product.suppliers || [];
             displayProductSuppliersList(productSuppliersCache);
@@ -3086,25 +3107,26 @@ async function openProductModal(productIdOrNull = null) {
         }
     } else {
         title.textContent = "Add New Product";
-        currentLinkingProductId = null; 
+        currentLinkingProductId = null;
         document.getElementById("productUnitOfMeasure").value = "pcs";
         document.getElementById("productLowStockThreshold").value = 0;
         document.getElementById("productReorderLevel").value = 0;
         productSuppliersCache = [];
         displayProductSuppliersList([]);
-        if(linkSupplierBtn) {
+        if (linkSupplierBtn) {
             linkSupplierBtn.disabled = true;
             linkSupplierBtn.title = "Save product first to link suppliers";
-            linkSupplierBtn.classList.add('btn-disabled'); 
+            linkSupplierBtn.classList.add('btn-disabled');
         }
     }
-    modal.style.display = "block";
+    modal.classList.add('show');
 }
+
 
 function closeProductModal() {
     const modal = document.getElementById("productModal");
     if (modal) {
-        modal.style.display = "none";
+        modal.classList.remove('show');
     }
     editingProductId = null;
     currentLinkingProductId = null;
@@ -3113,50 +3135,30 @@ function closeProductModal() {
     document.getElementById("productSuppliersTableBody").innerHTML = "";
     productSuppliersCache = [];
 }
-
+// Product Functions
 async function handleProductSubmit(e) {
     e.preventDefault();
-    const productModalTitle = document.getElementById("productModalTitle"); 
+    const productModalTitle = document.getElementById("productModalTitle");
     const data = {
         product_name: document.getElementById("productName").value.trim(),
         sku: document.getElementById("productSku").value.trim() || null,
-        hsn_acs_code:
-            document.getElementById("productHsnAcs").value.trim() || null,
+        hsn_acs_code: document.getElementById("productHsnAcs").value.trim() || null,
         description: document.getElementById("productDescription").value.trim(),
-        cost_price:
-            parseFloat(document.getElementById("productCostPrice").value) || 0,
-        sale_price: parseFloat(
-            document.getElementById("productSalePrice").value,
-        ),
-        current_stock: parseInt(
-            document.getElementById("productCurrentStock").value,
-        ),
-        unit_of_measure:
-            document.getElementById("productUnitOfMeasure").value.trim() ||
-            "pcs",
-        low_stock_threshold:
-            parseInt(
-                document.getElementById("productLowStockThreshold").value,
-            ) || 0,
-        reorder_level:
-            parseInt(document.getElementById("productReorderLevel").value) || 0,
+        cost_price: parseFloat(document.getElementById("productCostPrice").value) || 0,
+        sale_price: parseFloat(document.getElementById("productSalePrice").value),
+        current_stock: parseInt(document.getElementById("productCurrentStock").value),
+        unit_of_measure: document.getElementById("productUnitOfMeasure").value.trim() || "pcs",
+        low_stock_threshold: parseInt(document.getElementById("productLowStockThreshold").value) || 0,
+        reorder_level: parseInt(document.getElementById("productReorderLevel").value) || 0,
     };
 
-    if (
-        !data.product_name ||
-        isNaN(data.sale_price) ||
-        isNaN(data.current_stock)
-    ) {
-        alert(
-            "Product Name, Sale Price, and Current Stock are required and must be valid numbers.",
-        );
+    if (!data.product_name || isNaN(data.sale_price) || isNaN(data.current_stock)) {
+        alert("Product Name, Sale Price, and Current Stock are required and must be valid numbers.");
         return;
     }
 
     const method = editingProductId ? "PUT" : "POST";
-    const endpoint = editingProductId
-        ? `${API}/products/${editingProductId}`
-        : `${API}/products`;
+    const endpoint = editingProductId ? `${API}/products/${editingProductId}` : `${API}/products`;
 
     try {
         const res = await apiFetch(endpoint, {
@@ -3164,32 +3166,20 @@ async function handleProductSubmit(e) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(data),
         });
-        if(!res) return;
+        if (!res) return;
         const result = await res.json();
         if (!res.ok)
-            throw new Error(
-                result.error || `Operation failed: ${res.statusText}`,
-            );
+            throw new Error(result.error || `Operation failed: ${res.statusText}`);
 
-        alert(
-            result.message ||
-                (editingProductId
-                    ? "Product details updated"
-                    : "Product created"),
-        );
+        alert(result.message || (editingProductId ? "Product details updated" : "Product created"));
 
         if (method === "POST" && result.product && result.product.id) {
-            editingProductId = result.product.id; 
-            currentLinkingProductId = result.product.id; 
-            console.log('New product saved, currentLinkingProductId set to:', currentLinkingProductId); 
-
+            editingProductId = result.product.id;
+            currentLinkingProductId = result.product.id;
             document.getElementById("productId").value = editingProductId;
-            if (productModalTitle) 
-                productModalTitle.textContent =
-                    "Edit Product & Manage Suppliers";
-            const linkSupplierBtn = document.querySelector(
-                '#productModal button[onclick="openProductSupplierLinkModal()"]',
-            );
+            if (productModalTitle)
+                productModalTitle.textContent = "Edit Product & Manage Suppliers";
+            const linkSupplierBtn = document.querySelector('#productModal button[onclick="openProductSupplierLinkModal()"]');
             if (linkSupplierBtn) {
                 linkSupplierBtn.disabled = false;
                 linkSupplierBtn.title = "Link a supplier to this product";
@@ -3197,116 +3187,86 @@ async function handleProductSubmit(e) {
             }
         }
 
-        await loadProducts(); 
-        if (editingProductId) { 
+        await loadProducts();
+        if (editingProductId) {
             await loadAndDisplayProductSuppliers(editingProductId);
         }
-        await loadLenders(null, true); 
+        await loadLenders(null, true);
         if (document.getElementById("supplierManagementSection")?.style.display === 'block') {
-             loadSupplierSummaries(); 
+            loadSupplierSummaries();
         }
-        
     } catch (error) {
         console.error("Error saving product details:", error);
         alert("Error saving product details: " + error.message);
     }
 }
-
 async function deleteProduct(productId) {
-    if (
-        !confirm(
-            "Are you sure you want to delete this product? This action CANNOT be undone and will also remove associated supplier links.",
-        )
-    )
+    if (!confirm("Are you sure you want to delete this product? This action CANNOT be undone and will also remove associated supplier links."))
         return;
     try {
         const res = await apiFetch(`${API}/products/${productId}`, {
             method: "DELETE",
         });
-        if(!res) return;
+        if (!res) return;
         const result = await res.json();
         if (!res.ok)
-            throw new Error(
-                result.error || `Failed to delete product: ${res.statusText}`,
-            );
+            throw new Error(result.error || `Failed to delete product: ${res.statusText}`);
         alert(result.message || "Product deleted");
         await loadProducts();
-        await loadLenders(null, true); 
+        await loadLenders(null, true);
         if (document.getElementById("supplierManagementSection")?.style.display === 'block') {
-             loadSupplierSummaries(); 
+            loadSupplierSummaries();
         }
-
     } catch (error) {
         console.error("Error deleting product:", error);
         alert("Error deleting product: " + error.message);
     }
 }
-
-
 async function openProductSupplierLinkModal(linkData = null) {
-    console.log("openProductSupplierLinkModal called. currentLinkingProductId:", currentLinkingProductId); 
     if (!currentLinkingProductId) {
-        alert(
-            "Please save the product details first OR ensure an existing product is loaded before linking suppliers.",
-        );
-        return; 
+        alert("Please save the product details first OR ensure an existing product is loaded before linking suppliers.");
+        return;
     }
-    editingProductSupplierLinkId = linkData
-        ? linkData.product_supplier_id
-        : null;
+    editingProductSupplierLinkId = linkData ? linkData.product_supplier_id : null;
 
     const modal = document.getElementById("productSupplierLinkModal");
     const form = document.getElementById("productSupplierLinkForm");
     const title = document.getElementById("productSupplierLinkModalTitle");
     form.reset();
 
-    document.getElementById("linkModalProductId").value =
-        currentLinkingProductId;
-    document.getElementById("productSupplierLinkId").value =
-        editingProductSupplierLinkId || "";
+    document.getElementById("linkModalProductId").value = currentLinkingProductId;
+    document.getElementById("productSupplierLinkId").value = editingProductSupplierLinkId || "";
 
     await populateSuppliersForProductLinkModal();
 
     if (linkData) {
-        const currentProduct = productsCache.find(
-            (p) => p.id == currentLinkingProductId,
-        );
+        const currentProduct = productsCache.find((p) => p.id == currentLinkingProductId);
         title.textContent = `Edit Supplier Link for ${currentProduct?.product_name || "Product"}`;
         document.getElementById("linkSupplierId").value = linkData.supplier_id;
-        document.getElementById("linkSupplierSku").value =
-            linkData.supplier_sku || "";
-        document.getElementById("linkSupplierPurchasePrice").value =
-            linkData.purchase_price !== null
-                ? parseFloat(linkData.purchase_price).toFixed(2)
-                : "";
-        document.getElementById("linkSupplierLeadTime").value =
-            linkData.lead_time_days || "";
-        document.getElementById("linkIsPreferredSupplier").checked =
-            !!linkData.is_preferred;
-        document.getElementById("linkSupplierNotes").value =
-            linkData.supplier_specific_notes || linkData.notes || "";
+        document.getElementById("linkSupplierSku").value = linkData.supplier_sku || "";
+        document.getElementById("linkSupplierPurchasePrice").value = linkData.purchase_price !== null ? parseFloat(linkData.purchase_price).toFixed(2) : "";
+        document.getElementById("linkSupplierLeadTime").value = linkData.lead_time_days || "";
+        document.getElementById("linkIsPreferredSupplier").checked = !!linkData.is_preferred;
+        document.getElementById("linkSupplierNotes").value = linkData.supplier_specific_notes || linkData.notes || "";
     } else {
-        const currentProduct = productsCache.find(
-            (p) => p.id == currentLinkingProductId,
-        );
+        const currentProduct = productsCache.find((p) => p.id == currentLinkingProductId);
         title.textContent = `Link New Supplier to ${currentProduct?.product_name || "Product"}`;
     }
-    modal.style.display = "block";
+    modal.classList.add('show');
 }
 
 function closeProductSupplierLinkModal() {
     const modal = document.getElementById("productSupplierLinkModal");
-    if (modal) modal.style.display = "none";
+    if (modal) modal.classList.remove('show');
     editingProductSupplierLinkId = null;
     document.getElementById("productSupplierLinkForm").reset();
 }
-
 async function populateSuppliersForProductLinkModal() {
     const dropdown = document.getElementById("linkSupplierId");
     if (!dropdown) return;
 
-    if (externalEntitiesCache.length === 0 && !isLoadingLenders) {
-        await loadLenders(null, true); // Force load if cache is empty
+    if (externalEntitiesCache.length === 0 && !isLoading.lenders) {
+        await loadLenders(null, true);
     }
     const suppliers = externalEntitiesCache.filter(
         (e) => e.entity_type === 'Supplier',
@@ -3322,8 +3282,6 @@ async function populateSuppliersForProductLinkModal() {
     });
     if (currentValue) dropdown.value = currentValue;
 }
-
-
 async function handleProductSupplierLinkSubmit(e) {
     e.preventDefault();
     const productId = document.getElementById("linkModalProductId").value;
@@ -3337,27 +3295,15 @@ async function handleProductSupplierLinkSubmit(e) {
     const data = {
         product_id: parseInt(productId),
         supplier_id: parseInt(supplierId),
-        supplier_sku:
-            document.getElementById("linkSupplierSku").value.trim() || null,
-        purchase_price: document.getElementById("linkSupplierPurchasePrice")
-            .value
-            ? parseFloat(
-                  document.getElementById("linkSupplierPurchasePrice").value,
-              )
-            : null,
-        lead_time_days: document.getElementById("linkSupplierLeadTime").value
-            ? parseInt(document.getElementById("linkSupplierLeadTime").value)
-            : null,
-        is_preferred: document.getElementById("linkIsPreferredSupplier")
-            .checked,
-        notes:
-            document.getElementById("linkSupplierNotes").value.trim() || null,
+        supplier_sku: document.getElementById("linkSupplierSku").value.trim() || null,
+        purchase_price: document.getElementById("linkSupplierPurchasePrice").value ? parseFloat(document.getElementById("linkSupplierPurchasePrice").value) : null,
+        lead_time_days: document.getElementById("linkSupplierLeadTime").value ? parseInt(document.getElementById("linkSupplierLeadTime").value) : null,
+        is_preferred: document.getElementById("linkIsPreferredSupplier").checked,
+        notes: document.getElementById("linkSupplierNotes").value.trim() || null,
     };
 
     const method = editingProductSupplierLinkId ? "PUT" : "POST";
-    const endpoint = editingProductSupplierLinkId
-        ? `${API}/product-suppliers/${editingProductSupplierLinkId}`
-        : `${API}/product-suppliers`;
+    const endpoint = editingProductSupplierLinkId ? `${API}/product-suppliers/${editingProductSupplierLinkId}` : `${API}/product-suppliers`;
 
     try {
         const res = await apiFetch(endpoint, {
@@ -3365,23 +3311,43 @@ async function handleProductSupplierLinkSubmit(e) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(data),
         });
-        if(!res) return;
+        if (!res) return;
         const result = await res.json();
         if (!res.ok)
-            throw new Error(
-                result.error || "Failed to save product-supplier link.",
-            );
+            throw new Error(result.error || "Failed to save product-supplier link.");
 
         alert(result.message || "Product-supplier link saved.");
         closeProductSupplierLinkModal();
-        await loadAndDisplayProductSuppliers(productId); 
-        await loadProducts(); 
-        await loadLenders(null, true); 
+        await loadAndDisplayProductSuppliers(productId);
+        await loadProducts();
+        await loadLenders(null, true);
         if (document.getElementById("supplierManagementSection")?.style.display === 'block') {
-             loadSupplierSummaries(); 
+            loadSupplierSummaries();
         }
     } catch (error) {
         console.error("Error saving product-supplier link:", error);
+        alert("Error: " + error.message);
+    }
+}
+
+async function deleteProductSupplierLink(productSupplierId, productIdToRefresh) {
+    if (!confirm("Are you sure you want to unlink this supplier from the product?"))
+        return;
+    try {
+        const res = await apiFetch(`${API}/product-suppliers/${productSupplierId}`, { method: "DELETE" });
+        if (!res) return;
+        const result = await res.json();
+        if (!res.ok)
+            throw new Error(result.error || "Failed to unlink supplier.");
+        alert(result.message || "Supplier unlinked successfully.");
+        await loadAndDisplayProductSuppliers(productIdToRefresh);
+        await loadProducts();
+        await loadLenders(null, true);
+        if (document.getElementById("supplierManagementSection")?.style.display === 'block') {
+            loadSupplierSummaries();
+        }
+    } catch (error) {
+        console.error("Error unlinking supplier:", error);
         alert("Error: " + error.message);
     }
 }
@@ -3466,8 +3432,8 @@ async function deleteProductSupplierLink(
     }
 }
 async function loadInvoices() {
-    if (isLoadingInvoices) return invoicesCache;
-    isLoadingInvoices = true;
+    if (isLoading.invoices) return invoicesCache;
+    isLoading.invoices = true;
     const tableBody = document.getElementById("invoiceTableBody");
     if (tableBody)
         tableBody.innerHTML =
@@ -3493,7 +3459,7 @@ async function loadInvoices() {
         invoicesCache = [];
         return [];
     } finally {
-        isLoadingInvoices = false;
+        isLoading.invoices = false;
     }
 }
 
@@ -3535,16 +3501,17 @@ function displayInvoices() {
         `;
     });
 }
-
-
 function toggleGstFields() {
     const invoiceType = document.getElementById("inv_invoice_type").value;
     const gstSection = document.getElementById("invGstSection");
     const gstSummarySection = document.getElementById("invGstSummarySection");
+    const saveButton = document.getElementById("saveInvoiceBtn");
 
-    if (invoiceType === "TAX_INVOICE") {
-        if(gstSection) gstSection.style.display = "block"; // Or 'flex' if using flexbox for layout
-        if(gstSummarySection) gstSummarySection.style.display = "block";
+    const shouldShowGst = (invoiceType === "TAX_INVOICE" || (invoiceType === "SALES_RETURN"));
+    
+    if (shouldShowGst) {
+        if(gstSection) gstSection.style.display = "flex";
+        if(gstSummarySection) gstSummarySection.style.display = "table-row";
     } else {
         if(gstSection) gstSection.style.display = "none";
         if(gstSummarySection) gstSummarySection.style.display = "none";
@@ -3552,6 +3519,13 @@ function toggleGstFields() {
         document.getElementById("inv_sgst_rate_overall").value = 0;
         document.getElementById("inv_igst_rate_overall").value = 0;
     }
+
+    if (invoiceType === "SALES_RETURN") {
+        if(saveButton) saveButton.textContent = "Create Credit Note";
+    } else {
+        if(saveButton) saveButton.textContent = "Save Invoice";
+    }
+
     updateInvTotals();
 }
 
@@ -3572,148 +3546,111 @@ function togglePartyBillReturnsField() {
     }
     updateInvTotals();
 }
-
-async function openInvoiceModal(invoiceId = null) {
+async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
     editingInvoiceId = invoiceId;
     const modal = document.getElementById("invoiceModal");
     const form = document.getElementById("invoiceForm");
     const title = document.getElementById("invoiceModalTitle");
     const lineItemsTableBody = document.getElementById("invLineItemsTableBody");
-    const invoiceNumberInput = document.getElementById(
-        "inv_invoice_number_display",
-    );
-    const sameAsCustomerCheckbox = document.getElementById(
-        "inv_same_as_customer",
-    );
-    const paymentBeingMadeNowInput = document.getElementById(
-        "inv_payment_being_made_now",
-    );
-    const cumulativePaidDisplay = document.getElementById(
-        "inv_cumulative_paid_display",
-    );
+    const invoiceNumberInput = document.getElementById("inv_invoice_number_display");
+    const sameAsCustomerCheckbox = document.getElementById("inv_same_as_customer");
+    const paymentBeingMadeNowInput = document.getElementById("inv_payment_being_made_now");
+    const cumulativePaidDisplay = document.getElementById("inv_cumulative_paid_display");
+    const invoiceTypeDropdown = document.getElementById("inv_invoice_type");
+    const originalInvoiceInfoDiv = document.getElementById('originalInvoiceInfo');
 
     form.reset();
-    if(lineItemsTableBody) lineItemsTableBody.innerHTML = ""; // Clear previous items
-    if(invoiceNumberInput) invoiceNumberInput.value = "";
-    if(paymentBeingMadeNowInput) paymentBeingMadeNowInput.value = "0.00";
-    if(cumulativePaidDisplay) cumulativePaidDisplay.textContent = "0.00";
-    document.getElementById("inv_invoice_type").value = "TAX_INVOICE"; // Default
+    if(originalInvoiceInfoDiv) originalInvoiceInfoDiv.textContent = '';
+    if (lineItemsTableBody) lineItemsTableBody.innerHTML = "";
+    if (invoiceNumberInput) invoiceNumberInput.value = "";
+    if (paymentBeingMadeNowInput) paymentBeingMadeNowInput.value = "0.00";
+    if (cumulativePaidDisplay) cumulativePaidDisplay.textContent = "0.00";
+    
 
-    if (!businessProfileCache && !isLoadingBusinessProfile) {
+    if (!businessProfileCache && !isLoading.businessProfile) {
         await loadBusinessProfile();
     }
     await populateUserDropdownForInv();
-    if(productsCache.length === 0 && !isLoadingProducts) await loadProducts();
+    if (productsCache.length === 0 && !isLoading.products) await loadProducts();
 
-    if (invoiceId) {
-        title.textContent = "Edit Invoice";
+    if (invoiceId) { // Editing existing invoice/return
+        title.textContent = "Edit Document";
         try {
             const res = await apiFetch(`${API}/invoices/${invoiceId}`);
             if (!res || !res.ok)
-                throw new Error(
-                    `Failed to fetch invoice details: ${res.status} ${await res.text()}`,
-                );
+                throw new Error(`Failed to fetch invoice details: ${res.status} ${await res.text()}`);
             const inv = await res.json();
 
             document.getElementById("invoiceId").value = inv.id;
-            if(invoiceNumberInput) invoiceNumberInput.value = inv.invoice_number;
-            document.getElementById("inv_invoice_type").value =
-                inv.invoice_type || "TAX_INVOICE";
+            if (invoiceNumberInput) invoiceNumberInput.value = inv.invoice_number;
+            invoiceTypeDropdown.value = inv.invoice_type || "TAX_INVOICE";
             document.getElementById("inv_customer_id").value = inv.customer_id;
-            
-            document.getElementById("inv_invoice_date").value =
-                inv.invoice_date.split("T")[0];
-            document.getElementById("inv_due_date").value =
-                inv.due_date.split("T")[0];
+            document.getElementById("inv_invoice_date").value = inv.invoice_date.split("T")[0];
+            document.getElementById("inv_due_date").value = inv.due_date.split("T")[0];
             document.getElementById("inv_status").value = inv.status;
             document.getElementById("inv_notes").value = inv.notes || "";
+            
+            if (inv.invoice_type === 'SALES_RETURN') {
+                document.getElementById("original_invoice_number_input").value = inv.original_invoice_number || '';
+            }
 
-            if(cumulativePaidDisplay)
-                cumulativePaidDisplay.textContent = (
-                    inv.paid_amount || 0
-                ).toFixed(2);
-            if(paymentBeingMadeNowInput) {
-                paymentBeingMadeNowInput.value = "0.00"; 
+            if (cumulativePaidDisplay) cumulativePaidDisplay.textContent = (inv.paid_amount || 0).toFixed(2);
+            if (paymentBeingMadeNowInput) {
+                paymentBeingMadeNowInput.value = "0.00";
                 paymentBeingMadeNowInput.placeholder = "Enter new payment amount";
             }
 
-            document.getElementById("inv_party_bill_returns_amount").value =
-                inv.party_bill_returns_amount || 0;
+            document.getElementById("inv_party_bill_returns_amount").value = inv.party_bill_returns_amount || 0;
+            document.getElementById("inv_reverse_charge").value = inv.reverse_charge || "No";
+            document.getElementById("inv_transportation_mode").value = inv.transportation_mode || "";
+            document.getElementById("inv_vehicle_number").value = inv.vehicle_number || "";
+            document.getElementById("inv_date_of_supply").value = inv.date_of_supply ? inv.date_of_supply.split("T")[0] : "";
+            document.getElementById("inv_place_of_supply_state").value = inv.place_of_supply_state || "";
+            document.getElementById("inv_place_of_supply_state_code").value = inv.place_of_supply_state_code || "";
+            document.getElementById("inv_bundles_count").value = (inv.bundles_count === null || inv.bundles_count === undefined) ? "" : inv.bundles_count;
 
-            document.getElementById("inv_reverse_charge").value =
-                inv.reverse_charge || "No";
-            document.getElementById("inv_transportation_mode").value =
-                inv.transportation_mode || "";
-            document.getElementById("inv_vehicle_number").value =
-                inv.vehicle_number || "";
-            document.getElementById("inv_date_of_supply").value =
-                inv.date_of_supply ? inv.date_of_supply.split("T")[0] : "";
-            document.getElementById("inv_place_of_supply_state").value =
-                inv.place_of_supply_state || "";
-            document.getElementById("inv_place_of_supply_state_code").value =
-                inv.place_of_supply_state_code || "";
-            document.getElementById("inv_bundles_count").value =
-                (inv.bundles_count === null || inv.bundles_count === undefined) ? "" : inv.bundles_count;
-
-            const customer = usersDataCache.find(
-                (u) => u.id == inv.customer_id,
-            );
+            const customer = usersDataCache.find((u) => u.id == inv.customer_id);
             let isEffectivelySame = false;
-            if(customer) {
-                isEffectivelySame =
-                    (inv.consignee_name || "") === (customer.username || "") &&
-                    (inv.consignee_address_line1 || "") ===
-                        (customer.address_line1 || "") &&
-                    (inv.consignee_address_line2 || "") ===
-                        (customer.address_line2 || "") &&
-                    (inv.consignee_city_pincode || "") ===
-                        (customer.city_pincode || "") &&
-                    (inv.consignee_state || "") === (customer.state || "") &&
-                    (inv.consignee_gstin || "") === (customer.gstin || "") &&
-                    (inv.consignee_state_code || "") ===
-                        (customer.state_code || "");
-                
-                if(!isEffectivelySame && !inv.consignee_name && !inv.consignee_address_line1 && !inv.consignee_city_pincode && !inv.consignee_state && !inv.consignee_gstin && !inv.consignee_state_code) {
+            if (customer) {
+                isEffectivelySame = (inv.consignee_name || "") === (customer.username || "") &&
+                                    (inv.consignee_address_line1 || "") === (customer.address_line1 || "") &&
+                                    (inv.consignee_address_line2 || "") === (customer.address_line2 || "") &&
+                                    (inv.consignee_city_pincode || "") === (customer.city_pincode || "") &&
+                                    (inv.consignee_state || "") === (customer.state || "") &&
+                                    (inv.consignee_gstin || "") === (customer.gstin || "") &&
+                                    (inv.consignee_state_code || "") === (customer.state_code || "");
+                if (!isEffectivelySame && !inv.consignee_name && !inv.consignee_address_line1 && !inv.consignee_city_pincode && !inv.consignee_state && !inv.consignee_gstin && !inv.consignee_state_code) {
                     isEffectivelySame = true;
                 }
-            } else if (!inv.consignee_name && !inv.consignee_address_line1) { 
+            } else if (!inv.consignee_name && !inv.consignee_address_line1) {
                 isEffectivelySame = true;
             }
-            if(sameAsCustomerCheckbox) sameAsCustomerCheckbox.checked = isEffectivelySame;
+            if (sameAsCustomerCheckbox) sameAsCustomerCheckbox.checked = isEffectivelySame;
 
-            document.getElementById("inv_consignee_name").value =
-                inv.consignee_name || "";
-            document.getElementById("inv_consignee_address_line1").value =
-                inv.consignee_address_line1 || "";
-            document.getElementById("inv_consignee_address_line2").value =
-                inv.consignee_address_line2 || "";
-            document.getElementById("inv_consignee_city_pincode").value =
-                inv.consignee_city_pincode || "";
-            document.getElementById("inv_consignee_state").value =
-                inv.consignee_state || "";
-            document.getElementById("inv_consignee_gstin").value =
-                inv.consignee_gstin || "";
-            document.getElementById("inv_consignee_state_code").value =
-                inv.consignee_state_code || "";
-            document.getElementById("inv_amount_in_words").value =
-                inv.amount_in_words || "";
-
+            document.getElementById("inv_consignee_name").value = inv.consignee_name || "";
+            document.getElementById("inv_consignee_address_line1").value = inv.consignee_address_line1 || "";
+            document.getElementById("inv_consignee_address_line2").value = inv.consignee_address_line2 || "";
+            document.getElementById("inv_consignee_city_pincode").value = inv.consignee_city_pincode || "";
+            document.getElementById("inv_consignee_state").value = inv.consignee_state || "";
+            document.getElementById("inv_consignee_gstin").value = inv.consignee_gstin || "";
+            document.getElementById("inv_consignee_state_code").value = inv.consignee_state_code || "";
+            document.getElementById("inv_amount_in_words").value = inv.amount_in_words || "";
 
             const subtotalForTaxCalc = parseFloat(inv.amount_before_tax) || 0;
-            if (inv.invoice_type === 'TAX_INVOICE') {
-                document.getElementById("inv_cgst_rate_overall").value = (inv.total_cgst_amount && subtotalForTaxCalc > 0) ? ((inv.total_cgst_amount / subtotalForTaxCalc) * 100).toFixed(2) : 2.5;
-                document.getElementById("inv_sgst_rate_overall").value = (inv.total_sgst_amount && subtotalForTaxCalc > 0) ? ((inv.total_sgst_amount / subtotalForTaxCalc) * 100).toFixed(2) : 2.5;
-                document.getElementById("inv_igst_rate_overall").value = (inv.total_igst_amount && subtotalForTaxCalc > 0) ? ((inv.total_igst_amount / subtotalForTaxCalc) * 100).toFixed(2) : 0;
+            if (inv.invoice_type === 'TAX_INVOICE' || inv.invoice_type === 'SALES_RETURN') {
+                document.getElementById("inv_cgst_rate_overall").value = (inv.total_cgst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_cgst_amount / subtotalForTaxCalc) * 100).toFixed(2) : 2.5;
+                document.getElementById("inv_sgst_rate_overall").value = (inv.total_sgst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_sgst_amount / subtotalForTaxCalc) * 100).toFixed(2) : 2.5;
+                document.getElementById("inv_igst_rate_overall").value = (inv.total_igst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_igst_amount / subtotalForTaxCalc) * 100).toFixed(2) : 0;
             } else {
                 document.getElementById("inv_cgst_rate_overall").value = 0;
                 document.getElementById("inv_sgst_rate_overall").value = 0;
                 document.getElementById("inv_igst_rate_overall").value = 0;
             }
 
-            if(inv.line_items && Array.isArray(inv.line_items)) {
-                inv.line_items.forEach((item) => addInvLineItemRow(item));
+            if (inv.line_items && Array.isArray(inv.line_items)) {
+                inv.line_items.forEach((item) => addInvLineItemRow({ ...item, quantity: Math.abs(item.quantity) }));
             } else {
-                addInvLineItemRow(); // Add one empty row if no items came from backend
+                addInvLineItemRow();
             }
 
         } catch (error) {
@@ -3721,92 +3658,184 @@ async function openInvoiceModal(invoiceId = null) {
             alert("Could not load invoice details: " + error.message);
             return;
         }
-    } else { 
-        title.textContent = "New Invoice";
+    } else { // Creating a new document
+        title.textContent = (type === 'SALES_RETURN') ? 'New Sales Return' : 'New Invoice';
+        invoiceTypeDropdown.value = type;
+
         document.getElementById("invoiceId").value = "";
-        if(invoiceNumberInput) invoiceNumberInput.placeholder = "Enter or Suggest Invoice Number";
-        document.getElementById("inv_invoice_date").value = new Date()
-            .toISOString()
-            .split("T")[0];
-        document.getElementById("inv_due_date").value = new Date(
-            new Date().setDate(new Date().getDate() + 30),
-        )
-            .toISOString()
-            .split("T")[0];
+        if (invoiceNumberInput) invoiceNumberInput.placeholder = (type === 'SALES_RETURN') ? "Auto-generated as CN-..." : "Enter or Suggest Invoice Number";
+        document.getElementById("inv_invoice_date").value = new Date().toISOString().split("T")[0];
+        document.getElementById("inv_due_date").value = new Date(new Date().setDate(new Date().getDate() + 30)).toISOString().split("T")[0];
         document.getElementById("inv_cgst_rate_overall").value = 2.5;
         document.getElementById("inv_sgst_rate_overall").value = 2.5;
         document.getElementById("inv_igst_rate_overall").value = 0;
-        if(paymentBeingMadeNowInput){
+        if (paymentBeingMadeNowInput) {
             paymentBeingMadeNowInput.value = "0.00";
             paymentBeingMadeNowInput.placeholder = "Enter payment amount if any";
         }
-        if(cumulativePaidDisplay) cumulativePaidDisplay.textContent = "0.00";
+        if (cumulativePaidDisplay) cumulativePaidDisplay.textContent = "0.00";
 
-        if(document.getElementById("inv_invoice_type").value === 'TAX_INVOICE') {
-             if(sameAsCustomerCheckbox) sameAsCustomerCheckbox.checked = false; 
+        if (invoiceTypeDropdown.value === 'TAX_INVOICE') {
+            if (sameAsCustomerCheckbox) sameAsCustomerCheckbox.checked = false;
         } else {
-             if(sameAsCustomerCheckbox) sameAsCustomerCheckbox.checked = true; 
+            if (sameAsCustomerCheckbox) sameAsCustomerCheckbox.checked = true;
         }
         addInvLineItemRow();
     }
-    populateCustomerDetailsForInvoice(); // Call after populating customer dropdown
+    populateCustomerDetailsForInvoice();
+    
+    // --- START OF FIX ---
+    // Explicitly call toggleGstFields after setting up the form, especially for editing.
     toggleGstFields();
+    // --- END OF FIX ---
+
     togglePartyBillReturnsField();
-    toggleConsigneeFields(); // Call after customer details might be populated
+    toggleConsigneeFields();
+    toggleOriginalInvoiceSection();
 
-    modal.style.display = "block";
+    modal.classList.add('show');
+}// in app-script.js
+
+async function openEntityTransactionHistoryModal(entityId, entityName, type = 'lender') {
+    const modal = document.getElementById("entityTransactionHistoryModal");
+    const title = document.getElementById("entityTransactionHistoryModalTitle");
+    const tableBody = modal?.querySelector("tbody");
+    const tableFoot = modal?.querySelector("tfoot");
+
+    if (!modal || !title || !tableBody || !tableFoot) return;
+
+    title.textContent = `Transaction History for ${entityName}`;
+    tableBody.innerHTML = '<tr><td colspan="5">Loading...</td></tr>';
+    tableFoot.innerHTML = "";
+
+    try {
+        let allRelatedTxns;
+        let initialBalance = 0;
+
+        if (type === 'lender') {
+            allRelatedTxns = allTransactionsCache.filter(tx => tx.lender_id === entityId);
+            const entity = externalEntitiesCache.find(e => e.id === entityId);
+            if (entity) {
+                initialBalance = parseFloat(entity.initial_payable_balance || 0);
+            }
+        } else if (type === 'agreement') {
+            allRelatedTxns = allTransactionsCache.filter(tx => tx.agreement_id === entityId);
+        } else {
+            allRelatedTxns = [];
+        }
+
+        allRelatedTxns.sort((a, b) => new Date(a.date) - new Date(b.date) || a.id - a.id);
+
+        let runningBalance = initialBalance;
+        let totalDebits = 0;
+        let totalCredits = 0;
+
+        tableBody.innerHTML = ""; // Clear loading
+
+        if (type === 'lender' && initialBalance !== 0) {
+            const openingRow = tableBody.insertRow();
+            const openingCredit = `₹${Math.abs(initialBalance).toFixed(2)}`;
+            totalCredits += Math.abs(initialBalance);
+            const balanceClass = runningBalance >= 0 ? 'negative-balance' : 'positive-balance';
+            openingRow.innerHTML = `
+                <td>-</td>
+                <td colspan="2"><strong>Opening Balance</strong></td>
+                <td class="num negative">${openingCredit}</td>
+                <td class="num ${balanceClass}"><strong>₹${Math.abs(runningBalance).toFixed(2)}</strong></td>
+            `;
+        }
+
+        if (allRelatedTxns.length === 0 && tableBody.rows.length === 0) {
+            tableBody.innerHTML += '<tr><td colspan="5" style="text-align:center;">No transactions found for this entity.</td></tr>';
+        }
+
+        allRelatedTxns.forEach(tx => {
+            const row = tableBody.insertRow();
+            const amount = parseFloat(tx.amount || 0);
+            let debit = "";
+            let credit = "";
+
+            if (amount < 0) {
+                debit = `₹${Math.abs(amount).toFixed(2)}`;
+                totalDebits += Math.abs(amount);
+            } else {
+                credit = `₹${amount.toFixed(2)}`;
+                totalCredits += amount;
+            }
+            runningBalance += amount;
+
+            // --- THIS IS THE KEY FIX ---
+            // Combine category and description into one 'particulars' string.
+            const particulars = `${tx.category || "N/A"}`;
+            const description = tx.description || "";
+
+            const finalBalanceDisplay = Math.abs(runningBalance);
+            const balanceClass = runningBalance > 0 ? 'negative-balance' : 'positive-balance';
+
+            // Now we create the row with the correct number of cells
+            row.innerHTML = `
+                <td>${new Date(tx.date).toLocaleDateString()}</td>
+                <td>${particulars}</td>
+                <td>${description}</td>
+                <td class="num positive">${debit}</td>
+                <td class="num negative">${credit}</td>
+                <td class="num ${balanceClass}">₹${finalBalanceDisplay.toFixed(2)}</td>
+            `;
+        });
+
+        tableFoot.innerHTML = `
+            <tr style="border-top: 2px solid #ccc; font-weight: bold;">
+                <td colspan="3" style="text-align:right;">Total</td>
+                <td class="num positive">₹${totalDebits.toFixed(2)}</td>
+                <td class="num negative">₹${totalCredits.toFixed(2)}</td>
+                <td></td>
+            </tr>
+            <tr style="font-weight: bold;">
+                <td colspan="5" style="text-align:right;">Closing Balance (Payable)</td>
+                <td class="num ${runningBalance > 0 ? 'negative-balance' : 'positive-balance'}">₹${Math.abs(runningBalance).toFixed(2)}</td>
+            </tr>
+        `;
+
+    } catch (error) {
+        console.error("Error loading entity history:", error);
+        tableBody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:red;">Error: ${error.message}</td></tr>`;
+    }
+    modal.classList.add('show');
 }
-
-
 function populateCustomerDetailsForInvoice() {
     const customerId = document.getElementById("inv_customer_id").value;
     const customer = usersDataCache.find((u) => u.id == customerId);
 
     const nameDisplay = document.getElementById("inv_customer_name_display");
-    const addressDisplay = document.getElementById(
-        "inv_customer_address_display",
-    );
+    const addressDisplay = document.getElementById("inv_customer_address_display");
     const gstinDisplay = document.getElementById("inv_customer_gstin_display");
-    const stateCodeDisplay = document.getElementById(
-        "inv_customer_statecode_display",
-    );
-    const placeOfSupplyState = document.getElementById(
-        "inv_place_of_supply_state",
-    );
-    const placeOfSupplyStateCode = document.getElementById(
-        "inv_place_of_supply_state_code",
-    );
+    const stateCodeDisplay = document.getElementById("inv_customer_statecode_display");
+    const placeOfSupplyState = document.getElementById("inv_place_of_supply_state");
+    const placeOfSupplyStateCode = document.getElementById("inv_place_of_supply_state_code");
 
     if (customer) {
-        if(nameDisplay) nameDisplay.value = customer.username || "";
-        let address =
-            (customer.address_line1 || "") +
-            (customer.address_line2 ? "\n" + customer.address_line2 : "");
-        address +=
-            (customer.city_pincode ? "\n" + customer.city_pincode : "");
+        if (nameDisplay) nameDisplay.value = customer.username || "";
+        let address = (customer.address_line1 || "") + (customer.address_line2 ? "\n" + customer.address_line2 : "");
+        address += (customer.city_pincode ? "\n" + customer.city_pincode : "");
         address += (customer.state ? ", " + customer.state : "");
-        if(addressDisplay) addressDisplay.value = address.trim();
-        if(gstinDisplay) gstinDisplay.value = customer.gstin || "";
-        if(stateCodeDisplay)
-            stateCodeDisplay.value = customer.state_code || "";
-        
-        if(placeOfSupplyState) placeOfSupplyState.value = customer.state || "";
-        if(placeOfSupplyStateCode)
-            placeOfSupplyStateCode.value = customer.state_code || "";
-
+        if (addressDisplay) addressDisplay.value = address.trim();
+        if (gstinDisplay) gstinDisplay.value = customer.gstin || "";
+        if (stateCodeDisplay) stateCodeDisplay.value = customer.state_code || "";
+        if (placeOfSupplyState) placeOfSupplyState.value = customer.state || "";
+        if (placeOfSupplyStateCode) placeOfSupplyStateCode.value = customer.state_code || "";
     } else {
-        if(nameDisplay) nameDisplay.value = "";
-        if(addressDisplay) addressDisplay.value = "";
-        if(gstinDisplay) gstinDisplay.value = "";
-        if(stateCodeDisplay) stateCodeDisplay.value = "";
-        if(placeOfSupplyState && businessProfileCache) placeOfSupplyState.value = businessProfileCache.state || "";
-        if(placeOfSupplyStateCode && businessProfileCache)
-            placeOfSupplyStateCode.value =
-                businessProfileCache.state_code || "";
+        // Clear all fields if no customer is selected
+        if (nameDisplay) nameDisplay.value = "";
+        if (addressDisplay) addressDisplay.value = "";
+        if (gstinDisplay) gstinDisplay.value = "";
+        if (stateCodeDisplay) stateCodeDisplay.value = "";
+        if (placeOfSupplyState) placeOfSupplyState.value = businessProfileCache ? businessProfileCache.state || "" : "";
+        if (placeOfSupplyStateCode) placeOfSupplyStateCode.value = businessProfileCache ? businessProfileCache.state_code || "" : "";
     }
+    
+    // This function is now the single source of truth. It will handle the consignee logic.
     toggleConsigneeFields(); 
 }
-
 function toggleConsigneeFields() {
     const sameAsCustomerCheckbox = document.getElementById( "inv_same_as_customer" );
     const isSameAsCustomer = sameAsCustomerCheckbox ? sameAsCustomerCheckbox.checked : true; // Default to true if checkbox not found to hide fields
@@ -3883,7 +3912,7 @@ function toggleConsigneeFields() {
 
 function closeInvoiceModal() {
     const modal = document.getElementById("invoiceModal");
-    if (modal) modal.style.display = "none";
+    if (modal) modal.classList.remove('show');
     editingInvoiceId = null;
     const form = document.getElementById("invoiceForm");
     if (form) form.reset();
@@ -3925,7 +3954,7 @@ async function populateUserDropdownForInv() {
     try {
         if (
             !Array.isArray(usersDataCache) ||
-            (usersDataCache.length === 0 && !isLoadingUsers)
+            (usersDataCache.length === 0 && !isLoading.users)
         )
             await loadUsers();
         
@@ -3954,7 +3983,6 @@ async function populateUserDropdownForInv() {
         );
     }
 }
-
 function addInvLineItemRow(itemData = null) {
     const tableBody = document.getElementById("invLineItemsTableBody");
     const newRow = tableBody.insertRow();
@@ -4004,11 +4032,14 @@ function addInvLineItemRow(itemData = null) {
     uomInput.value = itemData ? (itemData.unit_of_measure || itemData.final_unit_of_measure || "Pcs") : "Pcs";
     uomCell.appendChild(uomInput);
 
+    // --- THIS IS THE KEY FIX ---
     productSelect.addEventListener("change", (e) => {
         const selectedOption = e.target.options[e.target.selectedIndex];
         const row = e.target.closest("tr");
         if (!row) return;
+
         const currentDescriptionInput = row.querySelector(".inv-line-description");
+        
         if (e.target.value === "custom") {
             currentDescriptionInput.value = ""; 
             currentDescriptionInput.placeholder = "Enter custom service/item";
@@ -4016,24 +4047,23 @@ function addInvLineItemRow(itemData = null) {
             row.querySelector(".inv-line-hsn").value = "";
             row.querySelector(".inv-line-uom").value = "Svc"; 
         } else if (selectedOption && selectedOption.value) {
+            // ALWAYS update the description, price, HSN, and UOM on change.
+            currentDescriptionInput.value = selectedOption.dataset.description || "";
+            currentDescriptionInput.placeholder = "Manual Description (if needed)";
             row.querySelector(".inv-line-price").value = parseFloat(selectedOption.dataset.price || 0).toFixed(2);
-            if (!currentDescriptionInput.value || currentDescriptionInput.placeholder === "Enter custom service/item") {
-                currentDescriptionInput.value = selectedOption.dataset.description || "";
-                currentDescriptionInput.placeholder = "Manual Description (if needed)";
-            }
             row.querySelector(".inv-line-hsn").value = selectedOption.dataset.hsn || "";
             row.querySelector(".inv-line-uom").value = selectedOption.dataset.uom || "Pcs";
         }
         updateInvLineItemTotal(row);
     });
-
+    // --- END OF FIX ---
 
     const qtyCell = newRow.insertCell();
     const qtyInput = document.createElement("input");
     qtyInput.type = "number";
     qtyInput.className = "form-control inv-line-qty num"; 
+    qtyInput.step="any";
     qtyInput.value = itemData ? itemData.quantity : 1;
-    qtyInput.min = 0.01; qtyInput.step="0.01"; 
     qtyInput.addEventListener("input", (e) => updateInvLineItemTotal(e.target.closest("tr")));
     qtyCell.appendChild(qtyInput);
 
@@ -4079,8 +4109,6 @@ function addInvLineItemRow(itemData = null) {
         updateInvLineItemTotal(newRow); 
     }
 }
-
-
 function updateInvLineItemTotal(row) {
     if (!row) return;
     const qty = parseFloat(row.querySelector(".inv-line-qty").value) || 0;
@@ -4093,30 +4121,60 @@ function updateInvLineItemTotal(row) {
 
     updateInvTotals();
 }
-
 function updateInvTotals() {
     let subtotal = 0;
+    let lineItemReturnsTotal = 0;
+
     document.querySelectorAll("#invLineItemsTableBody tr").forEach((row) => {
-        subtotal += parseFloat(row.querySelector(".inv-line-item-taxable-amount").textContent) || 0;
+        const qty = parseFloat(row.querySelector(".inv-line-qty").value) || 0;
+        const price = parseFloat(row.querySelector(".inv-line-price").value) || 0;
+        const discount = parseFloat(row.querySelector(".inv-line-discount").value) || 0;
+        const taxableValue = (qty * price) - discount;
+        
+        // This part is correct
+        if (qty >= 0) {
+            subtotal += taxableValue;
+        } else {
+            lineItemReturnsTotal += taxableValue;
+        }
     });
     document.getElementById("invSubtotal").textContent = subtotal.toFixed(2);
 
+    const returnsDisplayRow = document.getElementById("invReturnsDisplay");
+    const returnsAmountDisplay = document.getElementById("invReturnsAmountDisplay");
+    
+    let totalReturnsAmount = Math.abs(lineItemReturnsTotal);
+
     const invoiceType = document.getElementById("inv_invoice_type").value;
+    if (invoiceType === "PARTY_BILL") {
+        const partyBillReturnAmount = Math.abs(parseFloat(document.getElementById("inv_party_bill_returns_amount").value) || 0);
+        totalReturnsAmount += partyBillReturnAmount;
+    }
+    
+    if (totalReturnsAmount > 0) {
+        returnsAmountDisplay.textContent = totalReturnsAmount.toFixed(2);
+        returnsDisplayRow.style.display = "table-row";
+    } else {
+        returnsDisplayRow.style.display = "none";
+    }
+
     let totalCGST = 0, totalSGST = 0, totalIGST = 0;
 
-    if (invoiceType === "TAX_INVOICE") {
+    if (invoiceType === "TAX_INVOICE" || invoiceType === "SALES_RETURN") {
         const cgstRate = parseFloat(document.getElementById("inv_cgst_rate_overall").value) || 0;
         const sgstRate = parseFloat(document.getElementById("inv_sgst_rate_overall").value) || 0;
         const igstRate = parseFloat(document.getElementById("inv_igst_rate_overall").value) || 0;
+        
+        const taxableSubtotal = subtotal;
 
         if (igstRate > 0) { 
-            totalIGST = subtotal * (igstRate / 100);
+            totalIGST = taxableSubtotal * (igstRate / 100);
             document.getElementById("inv_cgst_rate_overall").value = 0; 
             document.getElementById("inv_sgst_rate_overall").value = 0;
             totalCGST = 0; totalSGST = 0;
         } else { 
-            totalCGST = subtotal * (cgstRate / 100);
-            totalSGST = subtotal * (sgstRate / 100);
+            totalCGST = taxableSubtotal * (cgstRate / 100);
+            totalSGST = taxableSubtotal * (sgstRate / 100);
             document.getElementById("inv_igst_rate_overall").value = 0; 
             totalIGST = 0;
         }
@@ -4126,16 +4184,10 @@ function updateInvTotals() {
     document.getElementById("invTotalSGST").textContent = totalSGST.toFixed(2);
     document.getElementById("invTotalIGST").textContent = totalIGST.toFixed(2);
 
-    let grandTotal = subtotal + totalCGST + totalSGST + totalIGST;
-
-    if (invoiceType === "PARTY_BILL") {
-        const returnsAmount = parseFloat(document.getElementById("inv_party_bill_returns_amount").value) || 0;
-        document.getElementById("invReturnsAmountDisplay").textContent = returnsAmount.toFixed(2);
-        document.getElementById("invReturnsDisplay").style.display = "block"; 
-        grandTotal -= returnsAmount;
-    } else {
-        document.getElementById("invReturnsDisplay").style.display = "none";
-    }
+    // --- START OF FIX ---
+    // The grand total calculation was not including the tax amounts.
+    let grandTotal = subtotal + totalCGST + totalSGST + totalIGST + lineItemReturnsTotal;
+    // --- END OF FIX ---
 
     document.getElementById("invGrandTotal").textContent = grandTotal.toFixed(2);
 
@@ -4144,9 +4196,18 @@ function updateInvTotals() {
         amountInWordsInput.value = convertAmountToWords(grandTotal).toUpperCase() + " RUPEES ONLY";
     }
 }
-
 async function handleInvoiceSubmit(e) {
     e.preventDefault();
+    
+    const customerId = document.getElementById("inv_customer_id").value;
+    if (!customerId) {
+        alert("Please select a customer before saving the invoice.");
+        return; 
+    }
+
+    const invoiceType = document.getElementById("inv_invoice_type").value;
+    const isReturn = invoiceType === 'SALES_RETURN';
+
     const lineItems = [];
     document.querySelectorAll("#invLineItemsTableBody tr").forEach(row => {
         const productSelect = row.querySelector(".inv-line-product");
@@ -4158,11 +4219,7 @@ async function handleInvoiceSubmit(e) {
         const unitPrice = parseFloat(row.querySelector(".inv-line-price").value);
         const discountAmount = parseFloat(row.querySelector(".inv-line-discount").value) || 0;
 
-        if ( (productId || description) && 
-            !isNaN(quantity) && quantity > 0 &&
-            !isNaN(unitPrice) && unitPrice >= 0 && 
-            !isNaN(discountAmount) && discountAmount >= 0
-        ) {
+        if ( (productId || description) && !isNaN(quantity) && quantity !== 0 && !isNaN(unitPrice) && unitPrice >= 0 && !isNaN(discountAmount) && discountAmount >= 0) {
             lineItems.push({
                 product_id: productId,
                 description: description || productSelect.options[productSelect.selectedIndex].text, 
@@ -4175,57 +4232,51 @@ async function handleInvoiceSubmit(e) {
         }
     });
 
-    if (lineItems.length === 0) { alert("Please add at least one valid line item."); return; }
-
-    const invoiceType = document.getElementById("inv_invoice_type").value;
+    if (lineItems.length === 0) {
+        alert("Please add at least one valid line item.");
+        return;
+    }
+    
     const paymentBeingMadeNowInput = document.getElementById("inv_payment_being_made_now");
     const paymentBeingMadeNow = parseFloat(paymentBeingMadeNowInput.value) || 0;
     let paymentMethodForNewPayment = null; 
 
-    if (paymentBeingMadeNow < 0) {
-        alert("Payment amount cannot be negative.");
-        paymentBeingMadeNowInput.focus();
-        return;
-    }
-
-    if (paymentBeingMadeNow > 0) {
-        let promptedMethod = "";
-        while(promptedMethod.toLowerCase() !== "cash" && promptedMethod.toLowerCase() !== "bank") {
-            promptedMethod = prompt(`You've entered a payment of ₹${paymentBeingMadeNow.toFixed(2)} for this invoice.\nEnter payment method: (Type "Cash" or "Bank")`);
-
-            if (promptedMethod === null) { 
-                alert("Payment will not be recorded as method was not specified. The invoice will be saved, but you'll need to record the payment separately if intended.");
-                paymentMethodForNewPayment = null; 
-                break; 
-            }
-            promptedMethod = promptedMethod.trim().toLowerCase();
-            if(promptedMethod !== "cash" && promptedMethod !== "bank") {
-                alert("Invalid payment method. Please enter 'Cash' or 'Bank', or Cancel.");
-            } else {
-                paymentMethodForNewPayment = promptedMethod; 
-            }
+    if (paymentBeingMadeNow !== 0) {
+        const selectedMethodRadio = document.querySelector('input[name="inv_payment_method"]:checked');
+        if (selectedMethodRadio) {
+            paymentMethodForNewPayment = selectedMethodRadio.value;
+        } else {
+            alert("A payment amount was entered, but no payment method was selected. The payment will not be recorded.");
         }
     }
+    
+    // --- START OF FIX ---
+    // Correctly read the GST rates from the form for all relevant invoice types.
+    const cgstRate = (invoiceType === 'TAX_INVOICE' || isReturn) ? (parseFloat(document.getElementById("inv_cgst_rate_overall").value) || 0) : 0;
+    const sgstRate = (invoiceType === 'TAX_INVOICE' || isReturn) ? (parseFloat(document.getElementById("inv_sgst_rate_overall").value) || 0) : 0;
+    const igstRate = (invoiceType === 'TAX_INVOICE' || isReturn) ? (parseFloat(document.getElementById("inv_igst_rate_overall").value) || 0) : 0;
+    // --- END OF FIX ---
 
 
     const data = {
         invoice_number: document.getElementById("inv_invoice_number_display").value.trim(),
-        customer_id: document.getElementById("inv_customer_id").value,
+        original_invoice_number: invoiceType === 'SALES_RETURN' ? document.getElementById("original_invoice_number_input").value.trim() : null,
+        customer_id: customerId,
         invoice_date: document.getElementById("inv_invoice_date").value,
         due_date: document.getElementById("inv_due_date").value,
         status: document.getElementById("inv_status").value,
         invoice_type: invoiceType,
         notes: document.getElementById("inv_notes").value.trim(),
         line_items: lineItems,
-        cgst_rate: invoiceType === 'TAX_INVOICE' ? (parseFloat(document.getElementById("inv_cgst_rate_overall").value) || 0) : 0,
-        sgst_rate: invoiceType === 'TAX_INVOICE' ? (parseFloat(document.getElementById("inv_sgst_rate_overall").value) || 0) : 0,
-        igst_rate: invoiceType === 'TAX_INVOICE' ? (parseFloat(document.getElementById("inv_igst_rate_overall").value) || 0) : 0,
-        party_bill_returns_amount: invoiceType === 'PARTY_BILL' ? (parseFloat(document.getElementById("inv_party_bill_returns_amount").value) || 0) : 0,
-        
-        payment_being_made_now: (paymentMethodForNewPayment && paymentBeingMadeNow > 0) ? paymentBeingMadeNow : 0,
-        payment_method_for_new_payment: (paymentMethodForNewPayment && paymentBeingMadeNow > 0) ? paymentMethodForNewPayment : null,
-
-
+        // --- START OF FIX ---
+        // Pass the determined GST rates to the backend.
+        cgst_rate: cgstRate,
+        sgst_rate: sgstRate,
+        igst_rate: igstRate,
+        // --- END OF FIX ---
+        party_bill_returns_amount: invoiceType === 'PARTY_BILL' ? (Math.abs(parseFloat(document.getElementById("inv_party_bill_returns_amount").value) || 0)) : 0,
+        payment_being_made_now: (paymentMethodForNewPayment && paymentBeingMadeNow !== 0) ? paymentBeingMadeNow : 0,
+        payment_method_for_new_payment: (paymentMethodForNewPayment && paymentBeingMadeNow !== 0) ? paymentMethodForNewPayment : null,
         reverse_charge: document.getElementById("inv_reverse_charge").value,
         transportation_mode: document.getElementById("inv_transportation_mode").value.trim(),
         vehicle_number: document.getElementById("inv_vehicle_number").value.trim(),
@@ -4233,7 +4284,6 @@ async function handleInvoiceSubmit(e) {
         place_of_supply_state: document.getElementById("inv_place_of_supply_state").value.trim(),
         place_of_supply_state_code: document.getElementById("inv_place_of_supply_state_code").value.trim(),
         bundles_count: document.getElementById("inv_bundles_count").value ? parseInt(document.getElementById("inv_bundles_count").value) : null,
-
         consignee_name: document.getElementById("inv_consignee_name").value.trim(),
         consignee_address_line1: document.getElementById("inv_consignee_address_line1").value.trim(),
         consignee_address_line2: document.getElementById("inv_consignee_address_line2").value.trim(),
@@ -4245,24 +4295,23 @@ async function handleInvoiceSubmit(e) {
     };
 
     if (document.getElementById("inv_same_as_customer").checked) {
-        const customerId = document.getElementById("inv_customer_id").value;
-        const customer = usersDataCache.find(u => u.id == customerId);
-        if (customer) {
-            data.consignee_name = customer.username;
-            data.consignee_address_line1 = customer.address_line1;
-            data.consignee_address_line2 = customer.address_line2;
-            data.consignee_city_pincode = customer.city_pincode;
-            data.consignee_state = customer.state;
-            data.consignee_gstin = customer.gstin;
-            data.consignee_state_code = customer.state_code;
+        const selectedCustomer = usersDataCache.find(u => u.id == customerId);
+        if (selectedCustomer) {
+            data.consignee_name = selectedCustomer.username;
+            data.consignee_address_line1 = selectedCustomer.address_line1;
+            data.consignee_address_line2 = selectedCustomer.address_line2;
+            data.consignee_city_pincode = selectedCustomer.city_pincode;
+            data.consignee_state = selectedCustomer.state;
+            data.consignee_gstin = selectedCustomer.gstin;
+            data.consignee_state_code = selectedCustomer.state_code;
         }
     }
 
-
-    if (!data.invoice_number || !data.customer_id || !data.invoice_date || !data.due_date || !data.invoice_type) {
-        alert("Invoice Number, Customer, Invoice Date, Due Date, and Invoice Type are required."); return;
+    if (invoiceType !== 'SALES_RETURN' && !data.invoice_number) {
+        alert("Invoice Number is required for this document type.");
+        return;
     }
-
+    
     const method = editingInvoiceId ? "PUT" : "POST";
     const endpoint = editingInvoiceId ? `${API}/invoices/${editingInvoiceId}` : `${API}/invoices`;
 
@@ -4274,25 +4323,22 @@ async function handleInvoiceSubmit(e) {
         const result = await res.json();
         
         if (!res.ok) {
-            console.error("<<<<< DEBUG: Invoice Save Error Response: ", result, ">>>>>");
             throw new Error(result.error || `Operation failed: ${res.statusText} - ${result.details || ""}`);
         }
 
-        let alertMessage = result.message || (editingInvoiceId ? "Invoice updated successfully." : "Invoice created successfully.");
-        if (result.payment_message) { 
-            alertMessage += `\n${result.payment_message}`;
-        } else if (data.payment_being_made_now > 0 && data.payment_method_for_new_payment) {
-             alertMessage += `\nPayment of ₹${data.payment_being_made_now.toFixed(2)} via ${data.payment_method_for_new_payment.toUpperCase()} was processed.`;
-        } else if (paymentBeingMadeNow > 0 && !data.payment_method_for_new_payment) { 
-            alertMessage += `\nInvoice saved. Payment of ₹${paymentBeingMadeNow.toFixed(2)} was NOT processed as method was cancelled.`;
+        let alertMessage = result.message || (editingInvoiceId ? "Document updated successfully." : "Document created successfully.");
+        if (data.payment_being_made_now !== 0 && data.payment_method_for_new_payment) {
+             alertMessage += `\nPayment/Refund of ₹${Math.abs(data.payment_being_made_now).toFixed(2)} via ${data.payment_method_for_new_payment.toUpperCase()} was processed.`;
         }
-
-
+        
         alert(alertMessage);
+
         closeInvoiceModal();
         await loadInvoices();
         await loadAllTransactions(); 
-        loadCustomerSummaries(); 
+        await loadProducts();
+        await loadUsers();
+        await loadCustomerSummaries(); 
 
         const cashLedgerActive = document.getElementById("cashLedgerContent")?.style.display !== 'none';
         const bankLedgerActive = document.getElementById("bankLedgerContent")?.style.display !== 'none';
@@ -4300,15 +4346,13 @@ async function handleInvoiceSubmit(e) {
         if (bankLedgerActive) loadBankLedger();
         updateDashboardCards();
 
-
     } catch (error) {
         console.error("Error saving invoice:", error);
-        alert("Error saving invoice: " + error.message);
+        alert("Error saving document: " + error.message);
     }
 }
-
 async function deleteInvoice(invoiceId) {
-    if (!confirm("Are you sure you want to delete this invoice?")) return;
+    if (!confirm("Are you sure you want to delete this invoice and all its related financial records and stock movements? This CANNOT be undone.")) return;
     try {
         const res = await apiFetch(`${API}/invoices/${invoiceId}`, { method: "DELETE" });
         if(!res) return;
@@ -4317,10 +4361,11 @@ async function deleteInvoice(invoiceId) {
         alert(result.message || "Invoice deleted");
         await loadInvoices();
         await loadAllTransactions(); 
+        await loadProducts();
+        await loadUsers();
         loadCustomerSummaries(); 
     } catch (error) { console.error("Error deleting invoice:", error); alert("Error: " + error.message); }
 }
-
 async function viewInvoice(invoiceId) {
     openInvoiceModal(invoiceId);
 }
@@ -4332,7 +4377,6 @@ async function printCurrentInvoiceById(invoiceIdFromList) {
         alert("Invalid Invoice ID provided for printing.");
     }
 }
-
 async function printCurrentInvoice() {
     if (editingInvoiceId) {
         await generateAndShowPrintableInvoice(editingInvoiceId);
@@ -4340,333 +4384,217 @@ async function printCurrentInvoice() {
         alert("Please save the invoice first or ensure an invoice is loaded in the modal to print.");
     }
 }
-
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
     try {
-        const res = await apiFetch(`${API}/invoices/${invoiceIdToPrint}`);
-        if (!res || !res.ok) {
-            const errorText = await res.text();
-            throw new Error(`Failed to fetch invoice data for printing. Status: ${res.status} - ${errorText}`);
+        const [invoiceRes, companyProfile] = await Promise.all([
+            apiFetch(`${API}/invoices/${invoiceIdToPrint}`),
+            loadBusinessProfile()
+        ]);
+
+        if (!invoiceRes || !invoiceRes.ok) throw new Error("Failed to fetch invoice data.");
+        const invoiceData = await invoiceRes.json();
+        
+        if (!companyProfile || !companyProfile.company_name) {
+            alert("Company profile could not be loaded. Please update it in the Company section.");
+            return;
         }
-        const invoiceData = await res.json();
 
-        let printHtml = `<html><head><title>Invoice ${invoiceData.invoice_number}</title>`;
-        printHtml += `<style>
-            @media print {
-                @page { size: A4 portrait; margin: 6mm 5mm 5mm 7mm !important; }
-                body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; margin: 0 !important; padding: 0 !important; font-size: 7.5pt !important; line-height: 1.1 !important; }
-                .invoice-box { box-shadow: none !important; border: none !important; margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; }
-                .no-print { display: none !important; }
-                table { page-break-inside:auto }
-                tr    { page-break-inside:avoid; page-break-after:auto }
-                thead { display:table-header-group }
-                tfoot { display:table-footer-group }
-                .items-table tbody tr, .details-grid, .address-grid, .totals-section, .footer-section, .bank-terms-grid { page-break-inside: avoid !important; }
-            }
-            body { font-family: 'Helvetica Neue', 'Helvetica', Arial, sans-serif; margin: 0; font-size: 8pt; line-height: 1.15; color: #000; }
-            * { box-sizing: border-box; }
-            .invoice-box { width: 100%; max-width: 198mm; margin: 2mm auto; padding: 1mm; border: 0.2mm solid #777; }
+        const printWindow = window.open('', '_blank', 'height=800,width=1000');
+        if (!printWindow) {
+            alert("Could not open print window. Please disable your pop-up blocker.");
+            return;
+        }
 
-            .header-section h1 { text-align: center; color: #000; margin: 0 0 0.5mm 0; font-size: 15pt; font-weight: bold; }
-            .header-section p { text-align: center; margin: 0.1mm 0; font-size: 7.5pt; }
-            .header-section .gstin-phone { font-size: 8pt; font-weight:bold; margin-top:0.5mm; }
+        printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
+        printWindow.document.write(`
+            <style>
+                body { font-family: "Arial", sans-serif; font-size: 9pt; margin: 0; color: #000; }
+                @page { size: A4; margin: 0; }
+                .print-container { width: 210mm; height: 297mm; padding: 5mm; box-sizing: border-box; }
+                .invoice-box { border: 1px solid #000; padding: 2mm; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; }
+                .main-table { width: 100%; height: 100%; border-collapse: collapse; display: flex; flex-direction: column; }
+                .main-table > thead, .main-table > tfoot { flex-shrink: 0; }
+                .main-table > tbody { flex-grow: 1; }
+                td, th { padding: 1mm; vertical-align: top; }
+                .text-center { text-align: center; } .text-right { text-align: right; } .font-bold { font-weight: bold; }
+                .company-name { font-size: 16pt; font-weight: bold; }
+                .invoice-title { font-size: 14pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1.5mm 0; margin: 2mm 0; }
+                .details-table td { padding: 0.5mm 1mm; font-size: 9pt; }
+                .label { font-weight: bold; }
+                .address-grid { margin-top: 2mm; border-top: 1px solid #000; border-bottom: 1px solid #000; }
+                .address-grid td { width: 50%; padding: 2mm; vertical-align: top; }
+                .address-grid td:first-child { border-right: 1px solid #000; }
+                .address-title { text-decoration: underline; font-weight: bold; margin-bottom: 1mm; display: block; }
+                .items-table { width: 100%; border-collapse: collapse; }
+                .items-table th, .items-table td { border: 1px solid #000; font-size: 9pt; padding: 1.5mm; word-wrap: break-word; }
+                .items-table thead th { background-color: #f2f2f2; }
+                .items-table tfoot td { font-weight: bold; }
+                .footer-section { padding-top: 2mm; }
+                .totals-summary { width: 50%; float: right; }
+                .totals-summary td { padding: 1mm 2mm; }
+                .grand-total td { font-weight: bold; border-top: 1px solid #000; }
+                .final-footer { display: flex; justify-content: space-between; align-items: flex-end; width: 100%; padding-top: 10mm; }
+                .signature { text-align: right; }
+            </style>
+        `);
 
-            .copy-type-section { height: 12px; margin-bottom: 0.5mm; display: flex; justify-content: flex-end;}
-            .copy-type { text-align: right; font-size: 6pt; border: 0.2mm solid black; padding: 0.5mm 1mm; display: inline-block; font-weight:bold; }
+        printWindow.document.write('</head><body><div class="print-container"><div class="invoice-box">');
+        
+        let headerHtml = `
+            <div class="text-center">
+                <div class="company-name">${companyProfile.company_name}</div>
+                <div>${companyProfile.address_line1}, ${companyProfile.city_pincode}, ${companyProfile.state}</div>
+                <div class="font-bold">GSTIN No.: ${companyProfile.gstin}</div>
+            </div>
+            <div class="invoice-title text-center">${invoiceData.invoice_type.replace(/_/g, ' ')}</div>
+            <table style="width:100%; font-size:9pt;">
+                 <tr>
+                    <td style="width:50%">
+                        <table class="details-table">
+                            <tr><td class="label">Invoice No:</td><td>${invoiceData.invoice_number}</td></tr>
+                            <tr><td class="label">Invoice Date:</td><td>${new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td></tr>
+                            <tr><td class="label">State:</td><td>${companyProfile.state}, <span class="label">State Code:</span> ${companyProfile.state_code}</td></tr>
+                        </table>
+                    </td>
+                    <td style="width:50%">
+                         <table class="details-table">
+                            <tr><td class="label">Transportation Mode:</td><td>${invoiceData.transportation_mode || 'N/A'}</td></tr>
+                            <tr><td class="label">Vehicle Number:</td><td>${invoiceData.vehicle_number || 'N/A'}</td></tr>
+                            <tr><td class="label">Date of Supply:</td><td>${invoiceData.date_of_supply ? new Date(invoiceData.date_of_supply).toLocaleDateString('en-GB') : new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td></tr>
+                            <tr><td class="label">Place of Supply:</td><td>${invoiceData.place_of_supply_state}, <span class="label">State Code:</span> ${invoiceData.place_of_supply_state_code}</td></tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+            <table class="address-grid">
+                <tr>
+                    <td>
+                        <span class="address-title">Details of Receiver/Billed To:</span>
+                        <div class="font-bold">${invoiceData.customer_name}</div>
+                        <div>${invoiceData.customer_address_line1 || ''}<br>${invoiceData.customer_city_pincode || ''}</div>
+                        <div><span class="label">GSTIN:</span> ${invoiceData.customer_gstin || 'N/A'}</div>
+                        <div><span class="label">State:</span> ${invoiceData.customer_state || ''}, <span class="label">Code:</span> ${invoiceData.customer_state_code || ''}</div>
+                    </td>
+                    <td>
+                        <span class="address-title">Details of Consignee/Shipped To:</span>
+                        <div class="font-bold">${invoiceData.consignee_name}</div>
+                        <div>${invoiceData.consignee_address_line1 || ''}<br>${invoiceData.consignee_city_pincode || ''}</div>
+                         <div><span class="label">PH:</span> ${invoiceData.customer_phone || ''}</div>
+                        <div><span class="label">GSTIN:</span> ${invoiceData.consignee_gstin || 'N/A'}</div>
+                        <div><span class="label">State:</span> ${invoiceData.consignee_state || ''}, <span class="label">Code:</span> ${invoiceData.consignee_state_code || ''}</div>
+                    </td>
+                </tr>
+            </table>`;
 
-            .invoice-title-section { text-align: center; font-size: 10pt; font-weight: bold; margin-bottom: 1mm; border-top: 0.5px solid #000; border-bottom: 0.5px solid #000; padding: 1mm 0;}
-
-            .details-grid-container { border-bottom: 0.5px solid #000; padding-bottom: 1mm; margin-bottom:1mm; }
-            .details-grid { display: flex; justify-content: space-between; font-size: 7pt; }
-            .details-grid > div { width: 48%; }
-            .details-grid p { margin: 0.2mm 0; display: flex; }
-            .details-grid .label { font-weight: normal; display: inline-block; width: auto; min-width:110px; padding-right: 0.5mm; flex-shrink: 0; }
-            .details-grid .value { font-weight: bold; flex-grow: 1; }
-            .details-grid .state-line .label { min-width: 30px;}
-            .details-grid .state-line .state-code { margin-left: 3mm;}
-
-            .address-grid { display: flex; justify-content: space-between; border-bottom: 0.5px solid #000; padding-bottom: 1mm; margin-bottom: 1mm; }
-            .address-grid > div { width: 48%; font-size: 7pt; }
-            .address-grid .underline { text-decoration: underline; font-weight: bold; margin-bottom: 0.5mm; display:block; }
-            .address-grid p { margin: 0.2mm 0; display: flex; }
-            .address-grid strong { font-weight: normal; display: inline-block; min-width: 45px; flex-shrink: 0; padding-right: 1mm;}
-
-            .items-table table { width: 100%; border-collapse: collapse; margin-top: 1mm; table-layout: fixed;}
-            .items-table th, .items-table td { border: 0.2mm solid #333; padding: 0.7mm 0.7mm; text-align: left; font-size: 7pt; vertical-align: top; word-wrap: break-word; }
-            .items-table th { background-color: #f0f0f0; font-weight: bold; text-align: center; }
-            .items-table td.num { text-align: right; }
-            .items-table td.center { text-align: center; }
-            .items-table .small-text-table { font-size: 5.5pt !important; text-align: center !important; padding: 0.5mm 0.2mm;}
-            .items-table tfoot td { font-weight: bold; background-color: #e8e8e8; padding: 1mm 0.8mm;}
+        let itemsHtml = `<table class="items-table"><thead><tr><th style="width:4%">Sr.</th><th style="width:30%">Name of Product/Service</th><th style="width:8%">HSN</th><th style="width:6%">UOM</th><th class="text-right" style="width:7%">Qty</th><th class="text-right" style="width:9%">Rate</th><th class="text-right" style="width:10%">Amount</th><th class="text-right" style="width:9%">Taxable</th><th class="text-right" style="width:8%">GST</th><th class="text-right" style="width:10%">Total</th></tr></thead><tbody>`;
+        let totalQty = 0, totalTaxable = 0, totalCgst = 0, totalSgst = 0, totalIgst = 0, grandTotal = 0;
+        
+        invoiceData.line_items.forEach((item, index) => {
+            const taxable_value = parseFloat(item.taxable_value) || 0;
+            const cgst_amount = parseFloat(item.cgst_amount) || 0;
+            const sgst_amount = parseFloat(item.sgst_amount) || 0;
+            const igst_amount = parseFloat(item.igst_amount) || 0;
+            const gstAmount = cgst_amount + sgst_amount + igst_amount;
             
-            .tax-invoice-cols .col-srno { width: 3%; } .tax-invoice-cols .col-name { width: 25%; } .tax-invoice-cols .col-hsn { width: 6%; } .tax-invoice-cols .col-uom { width: 4%; } .tax-invoice-cols .col-qty { width: 6%; } .tax-invoice-cols .col-rate { width: 7%; } .tax-invoice-cols .col-amount { width: 8%; } .tax-invoice-cols .col-discount { width: 6%; } .tax-invoice-cols .col-taxable { width: 8%; } .tax-invoice-cols .col-gst-rate { width: 4%; } .tax-invoice-cols .col-gst-amt { width: 5.5%; } .tax-invoice-cols .col-gst-rate { width: 4%; } .tax-invoice-cols .col-gst-amt { width: 5.5%; } .tax-invoice-cols .col-gst-rate { width: 4%; } .tax-invoice-cols .col-gst-amt { width: 5.5%; } .tax-invoice-cols .col-total { width: 8%; }
-            .non-tax-invoice-cols .col-srno-simple { width: 5%; } .non-tax-invoice-cols .col-particulars-simple { width: 55%; } .non-tax-invoice-cols .col-qty-simple { width: 13%; } .non-tax-invoice-cols .col-rate-simple { width: 13%; } .non-tax-invoice-cols .col-amount-simple { width: 14%; }
+            totalQty += parseFloat(item.quantity) || 0;
+            totalTaxable += taxable_value;
+            totalCgst += cgst_amount;
+            totalSgst += sgst_amount;
+            totalIgst += igst_amount;
+            grandTotal += parseFloat(item.line_total) || 0;
 
-
-            .totals-section { margin-top: 1mm; font-size: 7.5pt; }
-            .totals-section table { float: right; width: auto; min-width: 170px; }
-            .totals-section td { padding: 0.5mm 1mm; }
-            .totals-section td:first-child { text-align: right; font-weight: normal; }
-            .totals-section td.num { text-align: right; font-weight: bold;}
-            .totals-section .bold { font-weight: bold; }
-
-            .amount-in-words { margin-top: 1mm; font-size: 7.5pt; text-align:left; padding-left: 1.5mm; font-weight: bold;}
-
-            .bank-terms-grid { display: flex; justify-content: space-between; margin-top: 1.5mm; border-top: 0.5px solid #000; padding-top: 1.5mm; font-size: 6.5pt;}
-            .bank-terms-grid > div:first-child { width: 40%;}
-            .bank-terms-grid > div:last-child { width: 58%;}
-            .bank-terms-grid .underline { text-decoration: underline; font-weight: bold; margin-bottom: 0.5mm; display:block; }
-            .bank-terms-grid p { margin: 0.2mm 0; }
-
-            .footer-section { display: flex; justify-content: space-between; margin-top: 3mm; font-size: 7.5pt;}
-            .footer-section .common-seal { padding-top: 8mm; font-size: 6pt; flex-basis: 50%;}
-            .footer-section .signature { text-align: right; padding-top: 1.5mm; flex-basis: 45%;}
-            .footer-section .signature p {margin: 0.5mm 0;}
-
-            .e-oe { text-align: right; font-size: 6pt; margin-top: 1mm; }
-            .clear { clear: both; }
-        </style></head><body><div class="invoice-box">`;
-
-        printHtml += `<div class="header-section">
-                        <h1>${invoiceData.business_company_name || "ADVENTURER EXPORT"}</h1>
-                        <p>${invoiceData.business_address_line1 || ""}${invoiceData.business_address_line2 ? ", " + invoiceData.business_address_line2 : ""}</p>
-                        <p>${invoiceData.business_city_pincode || ""}, ${invoiceData.business_state || ""}</p>
-                        <p class="gstin-phone">${invoiceData.invoice_type === "TAX_INVOICE" ? `GSTIN: <span class="bold">${invoiceData.business_gstin || "N/A"}</span> | ` : ""}Phone: ${invoiceData.business_phone || "N/A"}</p>
-                     </div>`;
-        printHtml += `<div class="copy-type-section"><div class="copy-type">Original for Recipient</div></div> <div class="clear"></div>`;
-
-        let invoiceTitle = "INVOICE";
-        if (invoiceData.invoice_type === "BILL_OF_SUPPLY")
-            invoiceTitle = "BILL OF SUPPLY";
-        else if (invoiceData.invoice_type === "PARTY_BILL")
-            invoiceTitle = "PARTY BILL";
-        else if (invoiceData.invoice_type === "NON_GST_RETAIL_BILL")
-            invoiceTitle = "RETAIL BILL";
-        printHtml += `<div class="invoice-title-section">${invoiceTitle}</div>`;
-
-        printHtml += `<div class="details-grid-container"><div class="details-grid"><div>`;
-        if (invoiceData.invoice_type === "TAX_INVOICE") {
-            printHtml += `<p><span class="label">Reverse Charge:</span> <span class="value">${invoiceData.reverse_charge || "No"}</span></p>`;
-        }
-        printHtml += `<p><span class="label">Invoice No.:</span> <span class="value">${invoiceData.invoice_number}</span></p>
-                      <p><span class="label">Invoice Date:</span> <span class="value">${new Date(invoiceData.invoice_date).toLocaleDateString("en-GB")}</span></p>`;
-        if (invoiceData.invoice_type === "TAX_INVOICE") {
-            printHtml += `<p class="state-line"><span class="label">State:</span> <span class="value">${invoiceData.business_state || ""}</span><span class="label state-code">State Code:</span> <span class="value">${invoiceData.business_state_code || ""}</span></p>`;
-        }
-        printHtml += `</div><div>`;
-        if (invoiceData.invoice_type === "TAX_INVOICE") {
-            printHtml += `<p><span class="label">Transportation Mode:</span> <span class="value">${invoiceData.transportation_mode || "N/A"}</span></p>
-                          <p><span class="label">Vehicle Number:</span> <span class="value">${invoiceData.vehicle_number || "N/A"}</span></p>
-                          <p><span class="label">Date of Supply:</span> <span class="value">${invoiceData.date_of_supply ? new Date(invoiceData.date_of_supply).toLocaleDateString("en-GB") : "N/A"}</span></p>
-                          <p class="state-line"><span class="label">Place of Supply:</span> <span class="value">${invoiceData.place_of_supply_state || ""}</span><span class="label state-code">State Code:</span> <span class="value">${invoiceData.place_of_supply_state_code || ""}</span></p>`;
-        } else {
-            printHtml += `<p><span class="label">Due Date:</span> <span class="value">${new Date(invoiceData.due_date).toLocaleDateString("en-GB")}</span></p>`;
-        }
-        printHtml += `</div></div></div>`;
-
-        const toMsLabel =
-            invoiceData.invoice_type === "PARTY_BILL" ||
-            invoiceData.invoice_type === "NON_GST_RETAIL_BILL"
-                ? "To M/s:"
-                : "Details of Receiver (Billed To):";
-        const consigneeLabel =
-            invoiceData.invoice_type === "TAX_INVOICE"
-                ? "Details of Consignee (Shipped To):"
-                : "";
-
-        printHtml += `<div class="address-grid">
-                        <div>
-                            <p class="underline">${toMsLabel}</p>
-                            <p><strong>Name:</strong> ${invoiceData.customer_name || ""}</p>
-                            <p><strong>Address:</strong> ${invoiceData.customer_address_line1 || ""}${invoiceData.customer_address_line2 ? "<br>                   " + invoiceData.customer_address_line2 : ""}</p>
-                            <p>                   ${invoiceData.customer_city_pincode || ""}</p>`;
-        if (invoiceData.invoice_type === "TAX_INVOICE") {
-            printHtml += `<p><strong>GSTIN:</strong> ${invoiceData.customer_gstin || "N/A"}</p>
-                          <p><strong>State:</strong> ${invoiceData.customer_state || ""} <strong style="min-width:0px; padding-left:3mm;">State Code:</strong> ${invoiceData.customer_state_code || ""}</p>`;
-        }
-        printHtml += `</div>`;
-
-        if (invoiceData.invoice_type === "TAX_INVOICE") {
-            printHtml += `<div>
-                            <p class="underline">${consigneeLabel}</p>
-                            <p><strong>Name:</strong> ${invoiceData.consignee_name || invoiceData.customer_name || ""}</p>
-                            <p><strong>Address:</strong> ${invoiceData.consignee_address_line1 || invoiceData.customer_address_line1 || ""}${invoiceData.consignee_address_line2 || invoiceData.customer_address_line2 ? "<br>                   " + (invoiceData.consignee_address_line2 || invoiceData.customer_address_line2) : ""}</p>
-                            <p>                   ${invoiceData.consignee_city_pincode || invoiceData.customer_city_pincode || ""}</p>
-                            <p><strong>GSTIN:</strong> ${invoiceData.consignee_gstin || invoiceData.customer_gstin || "N/A"}</p>
-                            <p><strong>State:</strong> ${invoiceData.consignee_state || invoiceData.customer_state || ""} <strong style="min-width:0px; padding-left:3mm;">State Code:</strong> ${invoiceData.consignee_state_code || invoiceData.customer_state_code || ""}</p>
-                        </div>`;
-        } else {
-            printHtml += `<div></div>`;
-        }
-        printHtml += `</div>`;
-
-        printHtml += `<div class="items-table"><table class="${invoiceData.invoice_type === "TAX_INVOICE" ? "tax-invoice-cols" : "non-tax-invoice-cols"}">`;
-        if (invoiceData.invoice_type === "TAX_INVOICE") {
-            printHtml += `<colgroup> <col class="col-srno"> <col class="col-name"> <col class="col-hsn"> <col class="col-uom"> <col class="col-qty"> <col class="col-rate"> <col class="col-amount"> <col class="col-discount"> <col class="col-taxable"> <col class="col-gst-rate"> <col class="col-gst-amt"> <col class="col-gst-rate"> <col class="col-gst-amt"> <col class="col-gst-rate"> <col class="col-gst-amt"> <col class="col-total"> </colgroup>
-                            <thead><tr><th>Sr.No</th><th>Name of Product / Service</th><th>HSN ACS</th><th>UoM</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th><th class="num">Less: Disc.</th><th class="num">Taxable Value</th><th colspan="2">CGST</th> <th colspan="2">SGST</th> <th colspan="2">IGST</th><th class="num">Total</th></tr>
-                                <tr><th colspan="9"></th><th class="small-text-table">Rate</th><th class="small-text-table">Amt</th><th class="small-text-table">Rate</th><th class="small-text-table">Amt</th><th class="small-text-table">Rate</th><th class="small-text-table">Amt</th><th></th></tr></thead>`;
-        } else {
-            printHtml += `<colgroup> <col class="col-srno-simple"> <col class="col-particulars-simple"> <col class="col-qty-simple"> <col class="col-rate-simple"> <col class="col-amount-simple"> </colgroup>
-                            <thead><tr><th>S.No.</th><th>Particulars</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>`;
-        }
-        printHtml += `<tbody>`;
-        let srNo = 1;
-        let totalQuantity = 0;
-        let totalAmountBeforeDiscount = 0;
-        let totalDiscount = 0;
-        invoiceData.line_items.forEach((item) => {
-            totalQuantity += parseFloat(item.quantity);
-            const itemAmount =
-                parseFloat(item.quantity) * parseFloat(item.unit_price);
-            totalAmountBeforeDiscount += itemAmount;
-            totalDiscount += parseFloat(item.discount_amount || 0);
-
-            if (invoiceData.invoice_type === "TAX_INVOICE") {
-                printHtml += `<tr><td class="center">${srNo++}</td><td>${item.description}</td><td class="center">${item.final_hsn_acs_code || ""}</td><td class="center">${item.final_unit_of_measure || ""}</td><td class="num">${parseFloat(item.quantity).toFixed(2)}</td><td class="num">${parseFloat(item.unit_price).toFixed(2)}</td><td class="num">${itemAmount.toFixed(2)}</td><td class="num">${(item.discount_amount || 0).toFixed(2)}</td><td class="num">${parseFloat(item.taxable_value).toFixed(2)}</td><td class="num small-text-table">${(item.cgst_rate || 0).toFixed(2)}%</td><td class="num small-text-table">${(item.cgst_amount || 0).toFixed(2)}</td><td class="num small-text-table">${(item.sgst_rate || 0).toFixed(2)}%</td><td class="num small-text-table">${(item.sgst_amount || 0).toFixed(2)}</td><td class="num small-text-table">${(item.igst_rate || 0).toFixed(2)}%</td><td class="num small-text-table">${(item.igst_amount || 0).toFixed(2)}</td><td class="num">${parseFloat(item.line_total).toFixed(2)}</td></tr>`;
-            } else {
-                printHtml += `<tr><td class="center">${srNo++}</td><td>${item.description}</td><td class="num">${parseFloat(item.quantity).toFixed(2)}</td><td class="num">${parseFloat(item.unit_price).toFixed(2)}</td><td class="num">${parseFloat(item.line_total).toFixed(2)}</td></tr>`;
-            }
+            itemsHtml += `<tr>
+                <td class="text-center">${index + 1}</td>
+                <td>${item.description}</td>
+                <td class="text-center">${item.final_hsn_acs_code || ''}</td>
+                <td class="text-center">${item.final_unit_of_measure || ''}</td>
+                <td class="text-right">${(parseFloat(item.quantity) || 0).toFixed(2)}</td>
+                <td class="text-right">${(parseFloat(item.unit_price) || 0).toFixed(2)}</td>
+                <td class="text-right">${((parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)).toFixed(2)}</td>
+                <td class="text-right">${taxable_value.toFixed(2)}</td>
+                <td class="text-right">${gstAmount.toFixed(2)}</td>
+                <td class="text-right font-bold">${(parseFloat(item.line_total) || 0).toFixed(2)}</td>
+            </tr>`;
         });
-
-        const minRows =
-            invoiceData.invoice_type === "PARTY_BILL" ||
-            invoiceData.invoice_type === "NON_GST_RETAIL_BILL"
-                ? 10
-                : 15;
-        for (let i = invoiceData.line_items.length; i < minRows; i++) {
-            if (invoiceData.invoice_type === "TAX_INVOICE") {
-                printHtml += `<tr><td class="center">${srNo++}</td><td> </td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
-            } else {
-                printHtml += `<tr><td class="center">${srNo++}</td><td> </td><td></td><td></td><td></td></tr>`;
-            }
-        }
-        printHtml += `</tbody>`;
-
-        if (invoiceData.invoice_type === "TAX_INVOICE") {
-            printHtml += `<tfoot><tr><td colspan="4" class="bold">Total</td><td class="num bold">${totalQuantity.toFixed(2)}</td><td></td><td class="num bold">${totalAmountBeforeDiscount.toFixed(2)}</td><td class="num bold">${totalDiscount.toFixed(2)}</td><td class="num bold">${parseFloat(invoiceData.amount_before_tax).toFixed(2)}</td><td colspan="2" class="num bold">${parseFloat(invoiceData.total_cgst_amount).toFixed(2)}</td><td colspan="2" class="num bold">${parseFloat(invoiceData.total_sgst_amount).toFixed(2)}</td><td colspan="2" class="num bold">${parseFloat(invoiceData.total_igst_amount).toFixed(2)}</td><td class="num bold">${parseFloat(invoiceData.total_amount).toFixed(2)}</td></tr></tfoot>`;
-        } else if (invoiceData.invoice_type === "PARTY_BILL") {
-            printHtml += `<tfoot>
-                            <tr><td colspan="3" class="bold">Sub Total</td><td></td><td class="num bold">${parseFloat(invoiceData.amount_before_tax).toFixed(2)}</td></tr>
-                            <tr><td colspan="3" class="bold">Less: Returns</td><td></td><td class="num bold">${parseFloat(invoiceData.party_bill_returns_amount || 0).toFixed(2)}</td></tr>
-                            <tr><td colspan="3" class="bold">Total</td><td></td><td class="num bold">${parseFloat(invoiceData.total_amount).toFixed(2)}</td></tr>
-                           </tfoot>`;
-        } else {
-            printHtml += `<tfoot><tr><td colspan="3" class="bold">Total</td><td></td><td class="num bold">${parseFloat(invoiceData.total_amount).toFixed(2)}</td></tr></tfoot>`;
-        }
-        printHtml += `</table></div>`;
-
-        if (invoiceData.invoice_type === "TAX_INVOICE") {
-            printHtml += `<div class="totals-section"><table>
-                            <tr><td>Total Amount Before Tax</td><td>:</td><td class="num">${parseFloat(invoiceData.amount_before_tax).toFixed(2)}</td></tr>`;
-            const cgstPercentage =
-                invoiceData.amount_before_tax > 0 &&
-                invoiceData.total_cgst_amount > 0
-                    ? (
-                          (invoiceData.total_cgst_amount /
-                              invoiceData.amount_before_tax) *
-                          100
-                      ).toFixed(2)
-                    : "0.00";
-            const sgstPercentage =
-                invoiceData.amount_before_tax > 0 &&
-                invoiceData.total_sgst_amount > 0
-                    ? (
-                          (invoiceData.total_sgst_amount /
-                              invoiceData.amount_before_tax) *
-                          100
-                      ).toFixed(2)
-                    : "0.00";
-            const igstPercentage =
-                invoiceData.amount_before_tax > 0 &&
-                invoiceData.total_igst_amount > 0
-                    ? (
-                          (invoiceData.total_igst_amount /
-                              invoiceData.amount_before_tax) *
-                          100
-                      ).toFixed(2)
-                    : "0.00";
-
-            if (parseFloat(invoiceData.total_cgst_amount) > 0)
-                printHtml += `<tr><td>Add: CGST @ ${cgstPercentage}%</td><td>:</td><td class="num">${parseFloat(invoiceData.total_cgst_amount).toFixed(2)}</td></tr>`;
-            if (parseFloat(invoiceData.total_sgst_amount) > 0)
-                printHtml += `<tr><td>Add: SGST @ ${sgstPercentage}%</td><td>:</td><td class="num">${parseFloat(invoiceData.total_sgst_amount).toFixed(2)}</td></tr>`;
-            if (parseFloat(invoiceData.total_igst_amount) > 0)
-                printHtml += `<tr><td>Add: IGST @ ${igstPercentage}%</td><td>:</td><td class="num">${parseFloat(invoiceData.total_igst_amount).toFixed(2)}</td></tr>`;
-
-            const totalTax =
-                parseFloat(invoiceData.total_cgst_amount) +
-                parseFloat(invoiceData.total_sgst_amount) +
-                parseFloat(invoiceData.total_igst_amount);
-            printHtml += `<tr><td>Tax Amount: GST</td><td>:</td><td class="num">${totalTax.toFixed(2)}</td></tr>
-                          <tr><td class="bold">Total Amount After Tax</td><td class="bold">:</td><td class="num bold">${parseFloat(invoiceData.total_amount).toFixed(2)}</td></tr>
-                        </table><div class="clear"></div></div>`;
+        
+        for (let i = invoiceData.line_items.length; i < 15; i++) {
+             itemsHtml += `<tr><td style="height:1.5em;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
         }
 
-        printHtml += `<p class="amount-in-words">Total Invoice Amount in words: ${invoiceData.amount_in_words || convertAmountToWords(invoiceData.total_amount).toUpperCase() + " RUPEES ONLY"}</p>`;
+        itemsHtml += `</tbody><tfoot><tr>
+            <td colspan="4" class="font-bold text-right">Total</td>
+            <td class="text-right font-bold">${totalQty.toFixed(2)}</td>
+            <td colspan="2"></td>
+            <td class="text-right font-bold">${totalTaxable.toFixed(2)}</td>
+            <td class="text-right font-bold">${(totalCgst + totalSgst + totalIgst).toFixed(2)}</td>
+            <td class="text-right font-bold">${grandTotal.toFixed(2)}</td>
+        </tr></tfoot></table>`;
+        
+        let footerHtml = `
+            <div class="footer-section">
+                <table>
+                    <tr>
+                        <td style="width: 50%; vertical-align: top;">
+                            <div><span class="label">Total Amount in words:</span> <span class="font-bold" style="text-transform: uppercase;">${invoiceData.amount_in_words || convertAmountToWords(grandTotal) + ' RUPEES ONLY'}</span></div>
+                            <div style="margin-top: 5px;"><span class="label">Bundles:</span> <span class="font-bold">${invoiceData.bundles_count || 'N/A'}</span></div>
+                            <div style="margin-top: 10px;">
+                                <span class="label" style="text-decoration: underline;">Bank Details:</span>
+                                <div><span class="label">BANK NAME:</span> ${companyProfile.bank_name}</div>
+                                <div><span class="label">A/C NO:</span> ${companyProfile.bank_account_no}</div>
+                                <div><span class="label">IFSC NO:</span> ${companyProfile.bank_ifsc_code}</div>
+                            </div>
+                        </td>
+                        <td style="width: 50%; vertical-align: top;">
+                            <table class="totals-summary">
+                                <tr><td>Total Amount Before Tax</td><td class="text-right">${totalTaxable.toFixed(2)}</td></tr>
+                                <tr><td>Add: CGST</td><td class="text-right">${totalCgst.toFixed(2)}</td></tr>
+                                <tr><td>Add: SGST</td><td class="text-right">${totalSgst.toFixed(2)}</td></tr>
+                                <tr><td>Add: IGST</td><td class="text-right">${totalIgst.toFixed(2)}</td></tr>
+                                <tr class="grand-total"><td>Total Amount After Tax</td><td class="text-right">${grandTotal.toFixed(2)}</td></tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr><td colspan="2" style="padding-top: 5mm;"><span class="label">GST Payable on Reverse Charge:</span> No</td></tr>
+                </table>
+                <div class="final-footer">
+                    <div>(Common Seal)</div>
+                    <div class="signature">
+                        <div>Certified that the particulars given above are true & correct.</div>
+                        <div style="margin-top:15mm;" class="font-bold">For, ${companyProfile.company_name}</div>
+                        <div style="margin-top:2mm;">Authorised Signatory</div>
+                    </div>
+                </div>
+            </div>`;
 
-        printHtml += `<div class="bank-terms-grid"><div>`;
-        if (invoiceData.bundles_count) {
-            printHtml += `<p style="font-weight:bold;">Bundles : ${invoiceData.bundles_count}</p>`;
-        }
-        printHtml += `<div class="bank-details"><p class="underline">Bank Details:</p>
-                            <p><strong>BANK NAME:</strong> ${invoiceData.business_bank_name || "N/A"}</p>
-                            <p><strong>A/C NO:</strong> ${invoiceData.business_bank_account_no || "N/A"}</p>
-                            <p><strong>IFSC NO:</strong> ${invoiceData.business_bank_ifsc_code || "N/A"}</p>
-                        </div></div>
-                    <div class="terms"><p class="underline">Terms & Conditions:</p>
-                        <p style="white-space: pre-wrap;">${invoiceData.notes || "1. Goods once sold will not be taken back or exchanged.\n2. Interest @18% p.a. will be charged if the bill is not paid within the stipulated time.\n3. All disputes are subject to Tirupur jurisdiction only."}</p>
-                    </div></div>`;
+        printWindow.document.write('<div class="main-table">' + headerHtml + itemsHtml + '</div>' + footerHtml);
+        printWindow.document.write('</div></div></body></html>');
+        printWindow.document.close();
+        printWindow.focus();
+        
+        setTimeout(() => {
+            printWindow.print();
+            printWindow.close();
+        }, 250);
 
-        printHtml += `<div class="footer-section">
-                        <div class="common-seal" style="${invoiceData.invoice_type === "TAX_INVOICE" ? "padding-top: 8mm;" : "padding-top: 15mm;"}">
-                           ${invoiceData.invoice_type === "TAX_INVOICE" ? "<p> (Common Seal) </p>" : "<p>Party's Signature</p>"}
-                        </div>
-                        <div class="signature">`;
-        if (invoiceData.invoice_type === "TAX_INVOICE") {
-            printHtml += `<p>Certified that the particulars given above are true & correct.</p>`;
-        }
-        printHtml += `<p class="bold">For, ${invoiceData.business_company_name || "ADVENTURER EXPORT"}</p>
-                            <br><br><br>
-                            <p>Authorised Signatory</p>
-                        </div>
-                     </div>`;
-        if (invoiceData.invoice_type === "TAX_INVOICE")
-            printHtml += `<div class="e-oe">[E & OE]</div>`;
-
-        printHtml += `</div></body></html>`;
-
-        const printWindow = window.open("", "_blank", "height=800,width=1000");
-        if (printWindow) {
-            printWindow.document.write(printHtml);
-            printWindow.document.close();
-            printWindow.focus();
-            setTimeout(() => {
-                printWindow.print();
-            }, 500);
-        } else {
-            alert("Could not open print window. Please disable your pop-up blocker for this site.");
-        }
     } catch (error) {
         console.error("Error preparing invoice for print:", error);
         alert("Could not prepare invoice for printing: " + error.message);
     }
 }
-// --- END OF generateAndShowPrintableInvoice ---
-
 function convertAmountToWords(amount) {
-    const number = Math.round(amount * 100) / 100; 
-    const wholePart = Math.floor(number);
+    // --- THIS IS THE KEY FIX FOR NEGATIVE NUMBERS ---
+    const isNegative = amount < 0;
+    const absoluteAmount = Math.abs(amount);
 
-    const ones = [
-        "", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE",
-        "TEN", "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN", "SIXTEEN",
-        "SEVENTEEN", "EIGHTEEN", "NINETEEN",
-    ];
-    const tens = [
-        "", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY", "SEVENTY", "EIGHTY", "NINETY",
-    ];
+    const number = Math.round(absoluteAmount * 100) / 100;
+    const wholePart = Math.floor(number);
+    const decimalPart = Math.round((number - wholePart) * 100);
+
+    const ones = [ "", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN", "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN", "SIXTEEN", "SEVENTEEN", "EIGHTEEN", "NINETEEN"];
+    const tens = [ "", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY", "SEVENTY", "EIGHTY", "NINETY"];
+
     function numToWords(n) {
-        if (n < 0) return "MINUS " + numToWords(Math.abs(n));
+        if (n < 0) return "MINUS " + numToWords(Math.abs(n)); // Should not be hit now, but safe
         if (n === 0) return ""; 
 
         if (n < 20) return ones[n];
@@ -4679,11 +4607,10 @@ function convertAmountToWords(amount) {
         return "NUMBER TOO LARGE";
     }
 
-    if (wholePart === 0 && number === 0) return "ZERO"; 
+    if (wholePart === 0 && decimalPart === 0) return "ZERO RUPEES"; 
 
     let words = numToWords(wholePart);
     
-    const decimalPart = Math.round((number - wholePart) * 100);
     if (decimalPart > 0) {
         if(words === "") words = "ZERO"; 
         words += " RUPEES AND " + numToWords(decimalPart) + " PAISE";
@@ -4691,6 +4618,12 @@ function convertAmountToWords(amount) {
         if(words === "") words = "ZERO"; 
         words += " RUPEES";
     }
+    
+    // Add the "MINUS" prefix if the original amount was negative
+    if (isNegative) {
+        return "MINUS " + words.trim();
+    }
+
     return words.trim();
 }
 async function performGlobalSearch() {
@@ -4715,11 +4648,11 @@ async function performGlobalSearch() {
     resultsTableBody.innerHTML = '<tr><td colspan="6">Searching...</td></tr>';
     resultsContainer.style.display = "block"; 
     try {
-        if (allTransactionsCache.length === 0 && !isLoadingTransactions) await loadAllTransactions();
-        if (usersDataCache.length === 0 && !isLoadingUsers) await loadUsers();
-        if (externalEntitiesCache.length === 0 && !isLoadingLenders) await loadLenders(null, true); // Force load all
-        if (productsCache.length === 0 && !isLoadingProducts) await loadProducts();
-        if (invoicesCache.length === 0 && !isLoadingInvoices) await loadInvoices();
+        if (allTransactionsCache.length === 0 && !isLoading.transactions) await loadAllTransactions();
+        if (usersDataCache.length === 0 && !isLoading.users) await loadUsers();
+        if (externalEntitiesCache.length === 0 && !isLoading.lenders) await loadLenders(null, true); // Force load all
+        if (productsCache.length === 0 && !isLoading.products) await loadProducts();
+        if (invoicesCache.length === 0 && !isLoading.invoices) await loadInvoices();
 
         const matchedTransactions = allTransactionsCache.filter(
             (tx) =>
@@ -5062,7 +4995,7 @@ function createCashFlowChart(transactions) {
                     callbacks: { 
                         label: (context) => `₹${context.parsed.y.toLocaleString()}` 
                     } 
-                }
+                } 
             }
         }
     });
@@ -5478,6 +5411,7 @@ function createCategoryChart() {
         },
     });
 }
+
 function updateDashboardPeriod() {
     updateDashboardCards();
     updateChartsBasedOnPeriod(); 
@@ -5501,83 +5435,65 @@ async function loadRecentActivity() {
 
     const activities = [];
 
+    // Process transactions for the activity feed
     const recentTransactions = allTransactionsCache
-        .sort((a, b) => new Date(b.date || b.transaction_date || b.created_at) - new Date(a.date || a.transaction_date || a.created_at))
-        .slice(0, 3) 
+        .sort((a, b) => new Date(b.date || b.created_at) - new Date(a.date || a.created_at) || b.id - a.id)
+        .slice(0, 5) // Get the 5 most recent transactions
         .map(tx => {
-            let displayedAmount = parseFloat(tx.amount);
-            const originalTxCategoryInfo = transactionCategories.find(c => c.name === tx.category);
-            if (originalTxCategoryInfo && (originalTxCategoryInfo.affectsLedger === 'cash' || originalTxCategoryInfo.affectsLedger === 'bank')) {
-                 if (originalTxCategoryInfo.type.includes("income") || 
-                    (originalTxCategoryInfo.group === "customer_payment" && displayedAmount < 0) || 
-                    (originalTxCategoryInfo.group === "supplier_return" && displayedAmount > 0 && (originalTxCategoryInfo.name.toLowerCase().includes("cash refund") || originalTxCategoryInfo.name.toLowerCase().includes("bank refund"))) ||
-                    ((originalTxCategoryInfo.name === "Sale to Customer (Cash)" || originalTxCategoryInfo.name === "Sale to Customer (Bank)") && displayedAmount > 0) ||
-                    (((originalTxCategoryInfo.name === "Loan Received by Business (Cash)") || originalTxCategoryInfo.name === "Loan Received by Business (to Bank)") && displayedAmount > 0)
-                   ) {
-                    displayedAmount = Math.abs(displayedAmount); 
-                } else if (originalTxCategoryInfo.type.includes("expense") || 
-                             (originalTxCategoryInfo.group === "supplier_payment" && displayedAmount < 0) || 
-                             (originalTxCategoryInfo.group === "customer_return" && displayedAmount > 0 && (originalTxCategoryInfo.name.toLowerCase().includes("refund via cash") || originalTxCategoryInfo.name.toLowerCase().includes("refund via bank"))) ||
-                             ((originalTxCategoryInfo.name === "Purchase from Supplier (Cash)" || originalTxCategoryInfo.name === "Purchase from Supplier (Bank)") && displayedAmount < 0) ||
-                             (((originalTxCategoryInfo.name === "Loan Disbursed to Customer (Cash)") || originalTxCategoryInfo.name === "Loan Disbursed to Customer (Bank)") && displayedAmount > 0) || 
-                             (((originalTxCategoryInfo.name === "Loan Principal Repaid by Business (from Cash)") || originalTxCategoryInfo.name === "Loan Principal Repaid by Business (from Bank)") && displayedAmount < 0) ||
-                             (((originalTxCategoryInfo.name === "Loan Interest Paid by Business (from Cash)") || originalTxCategoryInfo.name === "Loan Interest Paid by Business (from Bank)") && displayedAmount < 0)
-                    ) {
-                    displayedAmount = -Math.abs(displayedAmount); 
+            const catInfo = transactionCategories.find(c => c.name === tx.category);
+            let displayedAmount = parseFloat(tx.amount || 0);
+            let flowType = '';
+            let icon = 'fa-exchange-alt';
+            let bgColor = 'var(--text-light-color)';
+
+            if (catInfo) {
+                if (catInfo.type.includes("income") || (catInfo.group === "customer_payment" && displayedAmount < 0)) {
+                    flowType = 'Inflow';
+                    icon = 'fa-arrow-up';
+                    bgColor = 'var(--success-color)';
+                } else if (catInfo.type.includes("expense") || (catInfo.group === "supplier_payment" && displayedAmount < 0)) {
+                    flowType = 'Outflow';
+                    icon = 'fa-arrow-down';
+                    bgColor = 'var(--danger-color)';
+                } else if (catInfo.type === 'receivable_increase') {
+                     flowType = 'Receivable';
+                     icon = 'fa-file-invoice';
+                     bgColor = 'var(--info-color)';
+                } else if (catInfo.type === 'payable_increase') {
+                     flowType = 'Payable';
+                     icon = 'fa-receipt';
+                     bgColor = 'var(--warning-color)';
                 }
             }
             
             return {
                 type: "transaction",
                 title: `${tx.category || "Transaction"}`,
-                subtitle: `₹${Math.abs(displayedAmount).toFixed(2)} ${displayedAmount >= 0 ? '(Inflow)' : '(Outflow)'}`,
-                time: formatTimeAgo(tx.date || tx.transaction_date || tx.created_at),
-                icon: displayedAmount >= 0 ? 'fa-arrow-up' : 'fa-arrow-down',
-                bgColor: displayedAmount >= 0 ? 'var(--success-color)' : 'var(--danger-color)'
+                subtitle: `₹${Math.abs(displayedAmount).toFixed(2)}${flowType ? ` (${flowType})` : ''}`,
+                time: formatTimeAgo(tx.date || tx.created_at),
+                icon: icon,
+                bgColor: bgColor,
+                date: new Date(tx.date || tx.created_at)
             };
         });
 
+    // Process invoices for the activity feed
     const recentInvoices = invoicesCache
         .sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
-        .slice(0, 2) 
+        .slice(0, 5) // Get the 5 most recent invoices
         .map(inv => ({
             type: "invoice",
             title: `Invoice #${inv.invoice_number}`,
             subtitle: `₹${parseFloat(inv.total_amount || 0).toFixed(2)} (${inv.status})`,
             time: formatTimeAgo(inv.created_at),
             icon: 'fa-file-invoice-dollar',
-            bgColor: 'var(--info-color)'
+            bgColor: 'var(--info-color)',
+            date: new Date(inv.created_at)
         }));
 
-    const recentCustomers = usersDataCache
-        .sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
-        .slice(0,1) 
-        .map(user => ({
-            type: "customer",
-            title: `New Customer: ${user.username}`,
-            subtitle: user.company || "No company",
-            time: formatTimeAgo(user.created_at),
-            icon: 'fa-user-plus',
-            bgColor: 'var(--primary-color)'
-        }));
-
-
-    activities.push(...recentTransactions, ...recentInvoices, ...recentCustomers);
-    activities.sort((a, b) => {
-        const parseTime = (timeStr) => {
-            if (timeStr === "Just now") return Date.now();
-            if (timeStr.includes("m ago")) return Date.now() - (parseInt(timeStr) * 60000);
-            if (timeStr.includes("h ago")) return Date.now() - (parseInt(timeStr) * 3600000);
-            if (timeStr === "Yesterday") {
-                const yesterday = new Date();
-                yesterday.setDate(yesterday.getDate() -1);
-                return yesterday.getTime();
-            }
-            if (timeStr.includes("d ago")) return Date.now() - (parseInt(timeStr) * 86400000);
-            return new Date(timeStr).getTime(); 
-        };
-        return parseTime(b.time) - parseTime(a.time);
-    });
+    // Combine and sort all activities to get the most recent items
+    activities.push(...recentTransactions, ...recentInvoices);
+    activities.sort((a, b) => b.date - a.date);
 
 
     if (activities.length === 0) {
@@ -5585,6 +5501,7 @@ async function loadRecentActivity() {
         return;
     }
 
+    // Display the top 5 most recent activities
     activityList.innerHTML = activities.slice(0, 5) 
         .map(activity => `
         <div class="activity-item">
@@ -5599,7 +5516,6 @@ async function loadRecentActivity() {
         </div>
     `).join("");
 }
-
 function formatTimeAgo(dateString) {
     if (!dateString) return "Unknown";
     const date = new Date(dateString);
@@ -5638,13 +5554,15 @@ function showLowStockProducts() {
 function refreshRecentActivity() {
     loadRecentActivity();
 }
-
 function openEntityTransactionHistoryModal(entityId, entityName, type = 'lender') {
     const modal = document.getElementById("entityTransactionHistoryModal");
     const title = document.getElementById("entityTransactionHistoryModalTitle");
     const tableBody = document.getElementById("entityTransactionHistoryTableBody");
 
     if (!modal || !title || !tableBody) return;
+    
+    // --- FIX: Add 'large' class to make the modal wider ---
+    modal.classList.add('large');
 
     title.textContent = `Transaction History for ${entityName}`;
     tableBody.innerHTML = '<tr><td colspan="5">Loading...</td></tr>';
@@ -5672,7 +5590,7 @@ function openEntityTransactionHistoryModal(entityId, entityName, type = 'lender'
             
             const amountCell = row.insertCell();
             amountCell.textContent = parseFloat(tx.amount).toFixed(2);
-            amountCell.className = tx.amount >= 0 ? "positive" : "negative";
+            amountCell.className = tx.amount >= 0 ? "positive num" : "negative num";
 
             let relatedTo = 'N/A';
             if(tx.user_id) relatedTo = usersDataCache.find(u => u.id === tx.user_id)?.username || `Cust. #${tx.user_id}`;
@@ -5681,14 +5599,13 @@ function openEntityTransactionHistoryModal(entityId, entityName, type = 'lender'
         });
     }
 
-    modal.style.display = "block";
+    modal.classList.add('show');
 }
-
 function closeEntityTransactionHistoryModal() {
     const modal = document.getElementById("entityTransactionHistoryModal");
-    if (modal) modal.style.display = 'none';
+    if (modal) modal.classList.remove('show');
 }
-
+// New function to open the repayment modal
 
 function openRepayLoanModal(agreementId) {
     const agreement = businessAgreementsCache.find(a => a.agreement_id === agreementId);
@@ -5720,18 +5637,30 @@ function openRepayLoanModal(agreementId) {
     document.getElementById('repay_type_combined').checked = true;
     toggleRepayOptions();
 
-    modal.style.display = "block";
+    modal.classList.add('show');
 }
-
 function toggleRepayOptions() {
-    console.log("toggleRepayOptions called."); 
-}
+    const paymentAmountInput = document.getElementById('repay_payment_amount');
+    const paymentType = document.querySelector('input[name="repay_payment_type"]:checked').value;
+    const interestDue = parseFloat(document.getElementById('repay_interest_payable').textContent) || 0;
+    const principalDue = parseFloat(document.getElementById('repay_outstanding_principal').textContent) || 0;
 
+    if (paymentType === 'interest') {
+        paymentAmountInput.value = interestDue.toFixed(2);
+    } else if (paymentType === 'principal') {
+        paymentAmountInput.value = principalDue.toFixed(2);
+    } else {
+        paymentAmountInput.placeholder = "Enter total payment amount";
+        if(paymentAmountInput.value === interestDue.toFixed(2) || paymentAmountInput.value === principalDue.toFixed(2)){
+             paymentAmountInput.value = '';
+        }
+    }
+}
 function closeRepayLoanModal() {
     const modal = document.getElementById("repayLoanModal");
-    if (modal) modal.style.display = "none";
+    if (modal) modal.classList.remove('show');
 }
-
+// New function to handle the repayment logic
 async function handleLoanRepaymentSubmit(e) {
     e.preventDefault();
     const agreementId = document.getElementById('repay_agreement_id').value;
@@ -5770,7 +5699,7 @@ async function handleLoanRepaymentSubmit(e) {
         interestToPay = paymentAmount;
     } else if (paymentType === 'principal') {
         principalToPay = paymentAmount;
-    } else { // 'combined' logic
+    } else {
         const interestDue = Math.abs(parseFloat(agreement.interest_payable || 0));
         interestToPay = Math.min(paymentAmount, interestDue);
         principalToPay = paymentAmount - interestToPay;
@@ -5890,12 +5819,12 @@ function openLoanDetailsModal(agreementId) {
         paymentHistoryTableBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No payment transactions found for this agreement.</td></tr>';
     }
 
-    modal.style.display = 'block';
+    modal.classList.add('show');
 }
 
 function closeLoanDetailsModal() {
     const modal = document.getElementById("loanDetailsModal");
-    if (modal) modal.style.display = "none";
+    if (modal) modal.classList.remove("show");
 }
 async function generateValuationReport(period) {
     if (usersDataCache.length === 0) await loadUsers();
@@ -6056,9 +5985,7 @@ async function handleBusinessChitLoanAgreementSubmit(e) {
     }
 
     const method = editingAgreementId ? "PUT" : "POST";
-    const endpoint = editingAgreementId ?
-        `${API}/business-agreements/${editingAgreementId}` :
-        `${API}/business-agreements`;
+    const endpoint = editingAgreementId ? `${API}/business-agreements/${editingAgreementId}` : `${API}/business-agreements`;
 
     try {
         const res = await apiFetch(endpoint, {
@@ -6097,7 +6024,7 @@ async function handleCompanyExpenseSubmit(e) {
     const data = {
         user_id: null,
         lender_id: null,
-        amount: -Math.abs(parseFloat(form.expenseAmount.value)), // Expenses are always negative
+        amount: -Math.abs(parseFloat(form.expenseAmount.value)),
         description: form.expenseDescription.value,
         category: fullCategoryName,
         date: form.expenseDate.value,
@@ -6110,8 +6037,7 @@ async function handleCompanyExpenseSubmit(e) {
 
     try {
         const res = await apiFetch(`${API}/transactions`, {
-            method: 'POST',
-            body: JSON.stringify(data),
+            method: 'POST', body: JSON.stringify(data),
         });
         if(!res) return;
         const result = await res.json();
@@ -6141,13 +6067,13 @@ function openCompanyExpenseModal(preselectCategory = null) {
         document.getElementById("expenseCategory").value = preselectCategory;
     }
     document.getElementById("expenseDate").value = new Date().toISOString().split("T")[0];
-    modal.style.display = "block";
+    modal.classList.add('show');
 }
 
 // Add this function near the other "closeModal" functions
 function closeCompanyExpenseModal() {
     const modal = document.getElementById("companyExpenseModal");
-    if(modal) modal.style.display = "none";
+    if(modal) modal.classList.remove('show');
 }
 
 function loadAndDisplayCompanyExpenses() {
@@ -6225,7 +6151,6 @@ async function handleOpeningBalanceSubmit(e) {
     }
 
     try {
-        // We send each transaction request one by one
         for (const txData of transactionsToCreate) {
             const res = await apiFetch(`${API}/transactions`, {
                 method: 'POST',
@@ -6239,13 +6164,518 @@ async function handleOpeningBalanceSubmit(e) {
         }
 
         alert("Opening balance transactions created successfully!");
-        
-        // Refresh relevant data
+        document.getElementById('openingBalanceModal').classList.remove('show');
         await loadAllTransactions();
-        navigateToSection('ledgersSection'); // Navigate to ledgers to see the result
+        navigateToSection('ledgersSection');
         
     } catch (error) {
         console.error("Error setting opening balances:", error);
         alert("Error: " + error.message);
     }
+}
+async function openOnboardingModal() {
+    const modal = document.getElementById('onboardingModal');
+    if (!modal) return;
+    
+    const customerDropdown = document.getElementById('onboard_customer_id');
+    const lenderDropdown = document.getElementById('onboard_lender_id');
+
+    await loadUsers();
+    await loadLenders(null, true);
+
+    customerDropdown.innerHTML = '<option value="">Select Customer/Party...</option>';
+    usersDataCache.forEach(u => {
+        if (u.role !== 'admin') {
+            const option = document.createElement('option');
+            option.value = u.id;
+            option.textContent = u.username;
+            customerDropdown.appendChild(option);
+        }
+    });
+
+    lenderDropdown.innerHTML = '<option value="">Select Financial Entity...</option>';
+    externalEntitiesCache.forEach(e => {
+         if (e.entity_type === 'Financial') {
+            const option = document.createElement('option');
+            option.value = e.id;
+            option.textContent = e.lender_name;
+            lenderDropdown.appendChild(option);
+        }
+    });
+    
+    document.getElementById('onboard_balance_date').value = new Date().toISOString().split('T')[0];
+    document.getElementById('onboard_loan_start_date').value = new Date().toISOString().split('T')[0];
+    document.getElementById('onboard_loan_last_paid_date').value = new Date().toISOString().split('T')[0];
+
+    showOnboardingTab('customer');
+    modal.classList.add('show');
+}
+
+
+function showOnboardingTab(tabName) {
+    document.querySelectorAll('.onboarding-tab').forEach(tab => tab.style.display = 'none');
+    document.querySelectorAll('#onboardingModal .ledger-tabs .ledger-tab-btn').forEach(btn => btn.classList.remove('active'));
+
+    if (tabName === 'customer') {
+        document.getElementById('onboardCustomerTab').style.display = 'block';
+        document.querySelector('#onboardingModal .ledger-tabs .ledger-tab-btn[onclick*="customer"]').classList.add('active');
+    } else {
+        document.getElementById('onboardLoanTab').style.display = 'block';
+        document.querySelector('#onboardingModal .ledger-tabs .ledger-tab-btn[onclick*="loan"]').classList.add('active');
+    }
+}
+async function handleCustomerBalanceSubmit(e) {
+    e.preventDefault();
+    const customerId = document.getElementById('onboard_customer_id').value;
+    const balance = parseFloat(document.getElementById('onboard_customer_balance').value);
+    const date = document.getElementById('onboard_balance_date').value;
+
+    if (!customerId || isNaN(balance) || !date) {
+        alert("Please select a customer, enter a valid balance, and select a date.");
+        return;
+    }
+
+    const txData = {
+        user_id: customerId,
+        amount: balance,
+        description: `Onboarded historical balance as of ${date}`,
+        category: "Opening Balance Adjustment",
+        date: date
+    };
+
+    try {
+        const res = await apiFetch(`${API}/transactions`, {
+            method: 'POST', body: JSON.stringify(txData)
+        });
+        if (!res || !res.ok) {
+            const result = await res.json();
+            throw new Error(result.error || "Failed to set balance.");
+        }
+        alert("Customer balance set successfully!");
+        document.getElementById('onboardingModal').classList.remove('show');
+        await loadAllTransactions();
+        await loadUsers();
+        navigateToSection('customerManagementSection');
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    }
+}
+async function handleExistingLoanSubmit(e) {
+    e.preventDefault();
+    const data = {
+        lender_id: document.getElementById('onboard_lender_id').value,
+        original_amount: parseFloat(document.getElementById('onboard_loan_original_amount').value) || 0,
+        current_balance: parseFloat(document.getElementById('onboard_loan_current_balance').value),
+        start_date: document.getElementById('onboard_loan_start_date').value,
+        last_paid_date: document.getElementById('onboard_loan_last_paid_date').value,
+        interest_rate: parseFloat(document.getElementById('onboard_loan_interest_rate').value) || 0,
+        details: document.getElementById('onboard_loan_details').value.trim()
+    };
+
+    if (!data.lender_id || isNaN(data.current_balance) || !data.start_date || !data.last_paid_date) {
+        alert("Please fill all required fields for the loan.");
+        return;
+    }
+
+    try {
+        const res = await apiFetch(`${API}/business-agreements/existing`, {
+            method: 'POST', body: JSON.stringify(data)
+        });
+        if (!res || !res.ok) {
+            const result = await res.json();
+            throw new Error(result.error || "Failed to onboard loan.");
+        }
+        alert("Existing loan onboarded successfully!");
+        document.getElementById('onboardingModal').classList.remove('show');
+        await loadAllTransactions();
+        await loadBusinessExternalFinanceAgreements();
+        navigateToSection('businessFinanceSection');
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    }
+}
+
+// Add this new function to your app-script.js file
+async function runGoogleSheetsImport() {
+    if (!confirm("Are you sure you want to import data from Google Sheets? This will create new entities, agreements, and opening balance transactions for data that doesn't already exist in the system. This process is safe to run multiple times.")) {
+        return;
+    }
+
+    const importBtn = document.querySelector('button[onclick="runGoogleSheetsImport()"]');
+    const originalBtnText = importBtn.innerHTML;
+    importBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Importing...';
+    importBtn.disabled = true;
+
+    try {
+        const res = await apiFetch('/api/import/google-sheets', {
+            method: 'POST'
+        });
+
+        const result = await res.json();
+
+        if (!res.ok) {
+            throw new Error(result.error || 'The import process failed on the server.');
+        }
+
+        let summaryMessage = `Import process finished!\n\n` +
+            `- Sheets Processed: ${result.summary.processed}\n` +
+            `- Records Imported: ${result.summary.imported}\n` +
+            `- Records Skipped (already exist): ${result.summary.skipped}\n` +
+            `- Errors: ${result.summary.errors}\n\n` +
+            `------------------\nDetails:\n------------------\n`;
+
+        result.summary.details.forEach(detail => {
+            summaryMessage += `• Sheet "${detail.sheet}": ${detail.status.toUpperCase()}`;
+            if (detail.reason) summaryMessage += ` - Reason: ${detail.reason}`;
+            if (detail.type) summaryMessage += ` - Type: ${detail.type}`;
+            if (detail.amount) summaryMessage += ` - Amount: ${detail.amount}`;
+            summaryMessage += '\n';
+        });
+
+        alert(summaryMessage);
+
+        await loadInitialData();
+        navigateToSection('businessFinanceSection');
+
+    } catch (error) {
+        console.error("Error running Google Sheets import:", error);
+        alert("An error occurred during the import process. Please check the console for details.\n\n" + error.message);
+    } finally {
+        importBtn.innerHTML = originalBtnText;
+        importBtn.disabled = false;
+    }
+}
+// This is the only function that needs to be updated.
+// Replace the existing createCategoryChart function with this one.
+
+async function createCategoryChart() {
+    const canvas = document.getElementById("categoryChart");
+    const placeholder = document.getElementById("topSellingPlaceholder");
+    if (!canvas || !placeholder) return;
+    if (categoryChartInstance) categoryChartInstance.destroy();
+    const ctx = canvas.getContext("2d");
+
+    const period = document.getElementById('dashboardPeriod')?.value || 'this_month';
+    const ranges = getPeriodDateRanges(period);
+    const productSales = {};
+
+    // --- NEW LOGIC START ---
+    // Filter relevant invoices for the period first
+    const monthlyInvoices = invoicesCache.filter(inv => {
+        const invDate = new Date(inv.invoice_date);
+        return invDate >= ranges.currentStart && invDate <= ranges.currentEnd && inv.status !== 'Void' && inv.status !== 'Draft';
+    });
+
+    // Asynchronously fetch line items for any invoice that doesn't have them
+    const invoicesToFetch = monthlyInvoices.filter(inv => !inv.line_items);
+    if (invoicesToFetch.length > 0) {
+        placeholder.innerHTML = 'Analyzing sales data...'; // Give user feedback
+        placeholder.style.display = 'block';
+        canvas.style.display = 'none';
+
+        await Promise.all(invoicesToFetch.map(async (inv) => {
+            try {
+                const res = await apiFetch(`${API}/invoices/${inv.id}`);
+                if (res && res.ok) {
+                    const detailedInvoice = await res.json();
+                    // Update the invoice in the main cache with its line items
+                    const cachedInv = invoicesCache.find(i => i.id === inv.id);
+                    if (cachedInv) {
+                        cachedInv.line_items = detailedInvoice.line_items || [];
+                    }
+                }
+            } catch (e) {
+                console.error(`Could not fetch line items for invoice ${inv.id} for chart`, e);
+            }
+        }));
+    }
+    // --- NEW LOGIC END ---
+
+    // Now, process all relevant invoices, which should all have line_items
+    monthlyInvoices.forEach(inv => {
+        if (inv.line_items && Array.isArray(inv.line_items)) {
+            inv.line_items.forEach(item => {
+                if (item.product_id) {
+                    const revenue = parseFloat(item.line_total || 0);
+                    const product = productsCache.find(p => p.id === item.product_id);
+                    const productName = product ? product.product_name : `Product ID ${item.product_id}`;
+                    productSales[productName] = (productSales[productName] || 0) + revenue;
+                } else if (item.description) { // Handle custom line items
+                    const revenue = parseFloat(item.line_total || 0);
+                    productSales[item.description] = (productSales[item.description] || 0) + revenue;
+                }
+            });
+        }
+    });
+
+    const sortedProducts = Object.entries(productSales)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 5);
+
+    if (sortedProducts.length === 0) {
+        placeholder.innerHTML = 'No sales data for this period.'; // Reset placeholder text
+        placeholder.style.display = 'block';
+        canvas.style.display = 'none';
+        return;
+    }
+
+    placeholder.style.display = 'none';
+    canvas.style.display = 'block';
+
+    const chartColors = ["#4A90E2", "#50E3C2", "#F5A623", "#BD10E0", "#7ED321"];
+
+    categoryChartInstance = new Chart(ctx, {
+        type: "doughnut",
+        data: {
+            labels: sortedProducts.map(([productName]) => productName),
+            datasets: [{
+                data: sortedProducts.map(([, amount]) => amount),
+                backgroundColor: chartColors,
+                borderColor: '#ffffff',
+                borderWidth: 2,
+            }],
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+                legend: { display: true, position: "bottom", labels: { padding: 10, font: {size: 10} } },
+                tooltip: { callbacks: { label: (context) => `${context.label}: ₹${context.parsed.toLocaleString()}` } }
+            },
+            cutout: '60%',
+        },
+    });
+}
+// Add this new function to your app-script.js file
+// Add this new function to app-script.js
+function printTransactionHistory(tableId, title) {
+    const historyTable = document.getElementById(tableId)?.cloneNode(true);
+    if (!historyTable) {
+        alert("History table not found for printing.");
+        return;
+    }
+
+    // Remove the 'Actions' column if it exists in the clone to not print it
+    const actionsHeaderIndex = Array.from(historyTable.querySelectorAll('thead th')).findIndex(th => th.textContent.toLowerCase() === 'actions');
+    if (actionsHeaderIndex > -1) {
+        historyTable.querySelectorAll('tr').forEach(row => {
+            if (row.cells[actionsHeaderIndex]) {
+                row.deleteCell(actionsHeaderIndex);
+            }
+        });
+    }
+
+
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+    <html>
+        <head>
+            <title>${title}</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                h3 { text-align: center; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f2f2f2; }
+                .num { text-align: right; }
+                .positive { color: #28a745; }
+                .negative { color: #dc3545; }
+                .positive-balance { color: #28a745; font-weight: bold; }
+                .negative-balance { color: #dc3545; font-weight: bold; }
+                tfoot { font-weight: bold; }
+            </style>
+        </head>
+        <body>
+            <h3>${title}</h3>
+            ${historyTable.outerHTML}
+            <script>
+                window.onload = () => {
+                    window.print();
+                    window.close();
+                }
+            <\/script>
+        </body>
+    </html>`);
+    printWindow.document.close();
+}
+function populateUserHistoryFilterDropdown(userId) {
+    const dropdown = document.getElementById("userTxHistoryCategoryFilter");
+    if (!dropdown) return;
+
+    // Find all transaction groups relevant to this user
+    const userTransactions = allTransactionsCache.filter(tx => tx.user_id === userId);
+    const relevantGroups = new Set();
+    userTransactions.forEach(tx => {
+        const catInfo = transactionCategories.find(c => c.name === tx.category);
+        if (catInfo && catInfo.group) {
+            // Combine related groups for simpler filtering
+            if (catInfo.group.includes('loan')) {
+                relevantGroups.add('customer_loan');
+            } else if (catInfo.group.includes('chit')) {
+                relevantGroups.add('customer_chit');
+            } else {
+                relevantGroups.add(catInfo.group);
+            }
+        }
+    });
+
+    // Map internal group names to user-friendly labels
+    const groupLabels = {
+        'customer_revenue': 'Sales & Revenue',
+        'customer_payment': 'Payments Received',
+        'customer_loan': 'Loans',
+        'customer_chit': 'Chits',
+        'customer_return': 'Returns & Refunds'
+    };
+
+    // Populate the dropdown with an "All" option and the dynamic options
+    dropdown.innerHTML = '<option value="all">All Transactions</option>';
+    relevantGroups.forEach(groupKey => {
+        const option = document.createElement('option');
+        option.value = groupKey;
+        option.textContent = groupLabels[groupKey] || groupKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        dropdown.appendChild(option);
+    });
+}
+async function openUserTransactionHistoryModal(
+    userId,
+    userName,
+    initialFilter = 'all',
+) {
+    currentViewingUserId = userId;
+    currentViewingUserName = userName;
+    const modal = document.getElementById("userTransactionHistoryModal");
+    const title = document.getElementById("userTransactionHistoryModalTitle");
+    const filterDropdown = document.getElementById(
+        "userTxHistoryCategoryFilter",
+    );
+    if (!modal || !title || !filterDropdown) return;
+
+    title.textContent = `Transaction History for ${userName}`;
+    
+    // --- THIS IS THE KEY ADDITION ---
+    // Populate the filter dropdown with relevant options for this specific user
+    populateUserHistoryFilterDropdown(userId); 
+    // -----------------------------
+
+    filterDropdown.value = initialFilter;
+    filterDropdown.dataset.userId = userId;
+    filterDropdown.dataset.userName = userName;
+    
+    loadUserTransactionHistory(userId, userName, initialFilter);
+    modal.classList.add('show');
+}
+// in app-script.js
+function toggleOriginalInvoiceSection() {
+    const invoiceType = document.getElementById("inv_invoice_type").value;
+    const originalInvoiceSection = document.getElementById("originalInvoiceSection");
+    
+    const invoiceNumberInput = document.getElementById("inv_invoice_number_display");
+    const invoiceNumberGroup = invoiceNumberInput ? invoiceNumberInput.parentElement : null;
+
+    if (!invoiceNumberInput || !invoiceNumberGroup) {
+        console.error("Could not find invoice number input or its parent group.");
+        return; 
+    }
+
+    if (invoiceType === 'SALES_RETURN') {
+        if (originalInvoiceSection) originalInvoiceSection.style.display = 'block';
+        if (invoiceNumberGroup) invoiceNumberGroup.style.display = 'none'; // Hide the regular invoice # input
+        invoiceNumberInput.required = false; // Prevent validation error on the hidden field
+    } else {
+        if (originalInvoiceSection) originalInvoiceSection.style.display = 'none';
+        if (invoiceNumberGroup) invoiceNumberGroup.style.display = 'block'; // Show the regular invoice # input
+        invoiceNumberInput.required = true;
+    }
+}
+// in app-script.js
+
+async function loadOriginalInvoiceForReturn() {
+    const originalInvoiceNumber = document.getElementById('original_invoice_number_input').value.trim();
+    const infoDiv = document.getElementById('originalInvoiceInfo');
+    const customerDropdown = document.getElementById('inv_customer_id');
+    const lineItemsTableBody = document.getElementById('invLineItemsTableBody');
+
+    if (!originalInvoiceNumber) {
+        infoDiv.textContent = "Please enter an invoice number to load.";
+        infoDiv.style.color = 'var(--danger-color)';
+        return;
+    }
+
+    infoDiv.textContent = "Loading...";
+    infoDiv.style.color = 'var(--text-light-color)';
+
+    const originalInvoice = invoicesCache.find(inv => inv.invoice_number === originalInvoiceNumber);
+
+    if (!originalInvoice) {
+        infoDiv.textContent = `Invoice "${originalInvoiceNumber}" not found in recently loaded invoices.`;
+        infoDiv.style.color = 'var(--danger-color)';
+        return;
+    }
+
+    try {
+        let detailedInvoice = originalInvoice;
+        if (!detailedInvoice.line_items || detailedInvoice.line_items.length === 0) {
+            const res = await apiFetch(`${API}/invoices/${originalInvoice.id}`);
+            if (!res || !res.ok) throw new Error('Failed to fetch full invoice details.');
+            detailedInvoice = await res.json();
+        }
+
+        customerDropdown.value = detailedInvoice.customer_id;
+        customerDropdown.dispatchEvent(new Event('change'));
+
+        // --- START OF FIX ---
+        // Automatically set GST rates based on the original invoice type
+        if (detailedInvoice.invoice_type === 'TAX_INVOICE') {
+            const subtotal = parseFloat(detailedInvoice.amount_before_tax) || 0;
+            // Calculate rates from original amounts to be precise
+            const cgstRate = (detailedInvoice.total_cgst_amount && subtotal !== 0) ? (detailedInvoice.total_cgst_amount / subtotal) * 100 : 0;
+            const sgstRate = (detailedInvoice.total_sgst_amount && subtotal !== 0) ? (detailedInvoice.total_sgst_amount / subtotal) * 100 : 0;
+            const igstRate = (detailedInvoice.total_igst_amount && subtotal !== 0) ? (detailedInvoice.total_igst_amount / subtotal) * 100 : 0;
+            
+            document.getElementById("inv_cgst_rate_overall").value = cgstRate.toFixed(2);
+            document.getElementById("inv_sgst_rate_overall").value = sgstRate.toFixed(2);
+            document.getElementById("inv_igst_rate_overall").value = igstRate.toFixed(2);
+        } else {
+            // If original invoice was not taxable, ensure return is also not taxable
+            document.getElementById("inv_cgst_rate_overall").value = 0;
+            document.getElementById("inv_sgst_rate_overall").value = 0;
+            document.getElementById("inv_igst_rate_overall").value = 0;
+        }
+        // --- END OF FIX ---
+
+        lineItemsTableBody.innerHTML = '';
+        if (detailedInvoice.line_items && detailedInvoice.line_items.length > 0) {
+            detailedInvoice.line_items.forEach(item => {
+                addInvLineItemRow({ ...item, quantity: Math.abs(item.quantity) });
+            });
+        }
+        
+        // Trigger a recalculation of totals after setting rates and adding items
+        updateInvTotals(); 
+        
+        infoDiv.textContent = `Successfully loaded items from Invoice #${originalInvoiceNumber}. Please adjust quantities for return.`;
+        infoDiv.style.color = 'var(--success-color)';
+
+    } catch (error) {
+        console.error("Error loading original invoice for return:", error);
+        infoDiv.textContent = "Error loading invoice details. Please check console.";
+        infoDiv.style.color = 'var(--danger-color)';
+    }
+}
+
+async function loadCompanyProfileForEditing() {
+    const profile = await loadBusinessProfile(); // This uses the cached or fetched profile
+    if (!profile) return;
+
+    document.getElementById('companyId').value = profile.id || '';
+    document.getElementById('company_name_input').value = profile.company_name || '';
+    document.getElementById('company_gstin_input').value = profile.gstin || '';
+    document.getElementById('company_address1_input').value = profile.address_line1 || '';
+    document.getElementById('company_city_pincode_input').value = profile.city_pincode || '';
+    document.getElementById('company_state_input').value = profile.state || '';
+    document.getElementById('company_phone_input').value = profile.phone || '';
+    document.getElementById('company_email_input').value = profile.email || '';
+    document.getElementById('company_bank_name_input').value = profile.bank_name || '';
+    document.getElementById('company_bank_account_no_input').value = profile.bank_account_no || '';
+    document.getElementById('company_bank_ifsc_input').value = profile.bank_ifsc_code || '';
 }
